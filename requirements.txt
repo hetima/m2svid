@@ -1,0 +1,27 @@
+accelerate
+aiohttp
+av
+decord
+diffusers
+ffmpeg-python
+fire
+# flash_attn-2.8.3+cu130torch2.9.1cxx11abiTRUE-cp312-cp312-win_amd64.whl from https://huggingface.co/ussoewwin/Flash-Attention-2_for_Windows
+ImageIO
+kornia
+lightning
+mediapy
+omegaconf
+open_clip_torch
+opencv-python
+opencv-python-headless
+pydub
+scipy
+# torch は 2.9.1。2.10 だとうまく動かない
+# torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu130
+transformers
+tqdm
+triton-windows
+# xformers==0.0.33 # torch==2.9 で上書きされる
+# xformers==0.0.33.post2 # これは2.9.1用らしいがうまく動かない
+# pip install xformers==0.0.33 --no-deps で torch の上書きを避けて入れる
+
