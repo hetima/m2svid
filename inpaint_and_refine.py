@@ -89,20 +89,34 @@ reprojected_mask = transforms.Resize(downsampled_resolution, antialias=mask_anti
 reprojected_mask = reprojected_mask[:, [0]]
 reprojected_mask = reprojected_mask.permute(1, 0, 2, 3).float() # [t,c,h,w] -> [c,t,h,w]
 
-input_batch = {
-    'video': input_video[None].cuda(),
-    'video_2nd_view': input_video[None].cuda(),
-    'reprojected_video': reprojected[None].cuda(),
-    'reprojected_mask': reprojected_mask[None].cuda(),
-    'fps_id': torch.tensor([fps]).cuda(),
-    'caption': [""],
-    "motion_bucket_id": torch.tensor([127]).cuda()
-}
 
+chunk_size = denoising_model.num_samples  # 25
+num_chunks = (t + chunk_size - 1) // chunk_size
+
+generated_chunks = []
 
 with torch.inference_mode():
-    generated_video = denoising_model.generate(input_batch)['generated-video']
-    generated_video = generated_video[0].cpu()
+    for chunk_idx in range(num_chunks):
+        start = chunk_idx * chunk_size
+        end = min(start + chunk_size, t)
+        print(
+            f"Processing chunk {chunk_idx + 1}/{num_chunks}, frames {start}-{end - 1}"
+        )
+
+        chunk_batch = {
+            "video": input_video[None, :, start:end].cuda(),
+            "video_2nd_view": input_video[None, :, start:end].cuda(),
+            "reprojected_video": reprojected[None, :, start:end].cuda(),
+            "reprojected_mask": reprojected_mask[None, :, start:end].cuda(),
+            "fps_id": torch.tensor([fps]).cuda(),
+            "caption": [""],
+            "motion_bucket_id": torch.tensor([127]).cuda(),
+        }
+
+        chunk_output = denoising_model.generate(chunk_batch)["generated-video"]
+        generated_chunks.append(chunk_output[0].cpu())
+
+generated_video = torch.cat(generated_chunks, dim=1)  # [c, t_total, h, w]
 
 
 def save_video(video, fps, path):
