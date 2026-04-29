@@ -1,3 +1,22 @@
+# About this fork
+- conda不要でvenvで使えるようにしたました（最低限の`requirements.txt`）
+- なんか最終処理が25フレームまでしか対応してないみたいなので分割処理して結合するようにしたました（`inpaint_and_refine.py`）
+
+## インストール
+
+torch関連は`requirements.txt`に書いてないので個別にインストールしてください。以下はpython 3.12のvenvにインストールする例です。flash_attnは [ussoewwin/Flash-Attention-2_for_Windows · Hugging Face](https://huggingface.co/ussoewwin/Flash-Attention-2_for_Windows) からダウンロードできます。GitHubとかにもあると思います。torch 2.10だとうまく動く組み合わせを見つけられませんでした。2.9.1が無難だと思います。2.9.1用のxformersは0.0.33.post2みたいですが、それだと動かなかったので0.3.3を入れました。
+
+```sh
+uv pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu130
+uv pip install xformers==0.0.33 --no-deps #--no-depsしないと2.9が入る
+uv pip install "path/to/flash_attn-2.8.3+cu130torch2.9.1cxx11abiTRUE-cp312-cp312-win_amd64.whl"
+
+uv pip install -r requirements.txt
+```
+
+使い方はオリジナルと同じです。「Get started」の説明にあるモデルをダウンロードして配置し、「Inference」の項目のスクリプトを実行。`PYTHONPATH`の追加がスクリプト内でするようにしたので不要です。
+
+
 # M2SVid: End-to-End Inpainting and Refinement for Monocular-to-Stereo Video Conversion
 
 
