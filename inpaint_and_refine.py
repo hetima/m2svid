@@ -14,10 +14,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import sys
+import os
+
+# PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTHONPATH}"
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+for _p in [
+    _SCRIPT_DIR,
+    os.path.join(_SCRIPT_DIR, "third_party", "Hi3D-Official"),
+    os.path.join(_SCRIPT_DIR, "third_party", "pytorch-msssim"),
+]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 import random
 import argparse
 from pytorch_lightning import seed_everything
-import os
 import ffmpeg
 from torchvision import transforms
 import torch

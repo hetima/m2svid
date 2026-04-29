@@ -14,6 +14,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import sys
+import os
+
+# PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTHONPATH}"
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+for _p in [
+    _SCRIPT_DIR,
+    os.path.join(_SCRIPT_DIR, "third_party", "Hi3D-Official"),
+    os.path.join(_SCRIPT_DIR, "third_party", "pytorch-msssim"),
+]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 import argparse
 from m2svid.utils.video_utils import open_ffmpeg_process, read_frames_in_batches_ffmpeg, get_video_fps
 from m2svid.warping.warping import scatter_image
@@ -22,7 +35,6 @@ import numpy as np
 import tqdm
 from pathlib import Path
 import ffmpeg
-import os
 import cv2
 
 
@@ -96,7 +108,6 @@ def process_video_with_depth(
     ffmpeg_process_reprojected.wait()
     ffmpeg_process_mask.stdin.close()
     ffmpeg_process_mask.wait()
-
 
 
 if __name__ == "__main__":
