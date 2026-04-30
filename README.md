@@ -1,6 +1,7 @@
 # About this fork
 - conda不要でvenvで使えるようにしたました（最低限の`requirements.txt`）
 - なんか最終処理が25フレームまでしか対応してないみたいなので分割処理して結合するようにしたました（`inpaint_and_refine.py`）
+- `m2svid_weights.pt`と`open_clip_pytorch_model.bin`を合体させfp16に変換した`m2svid_combined_fp16.safetensors`
 
 ## インストール
 
@@ -31,6 +32,25 @@ uv pip install -r requirements.txt
 ```
 
 使い方はオリジナルと同じです。「Get started」の説明にあるモデルをダウンロードして配置し、「Inference」の項目のスクリプトを実行。`PYTHONPATH`の追加はスクリプト内でするようにしたので不要です。
+
+## m2svid_combined_fp16.safetensors
+
+`m2svid_weights.pt`と`open_clip_pytorch_model.bin`を合体させfp16に変換したものです。[Hugging Face](https://huggingface.co/hrktxz/m2svid_combined) からダウンロードできます。
+
+`--model_config`に`m2svid_combined.yaml`を指定して使用してください。
+
+```sh
+python inpaint_and_refine.py  \
+        --mask_antialias 0 \
+        --model_config configs/m2svid_combined.yaml \
+        --ckpt ckpts/m2svid_combined_fp16.safetensors \
+        --video_path demo/input.mp4  \
+        --reprojected_path outputs/reprojected/input_reprojected.mp4 \
+        --reprojected_mask_path outputs/reprojected/input_reprojected_mask.mp4\
+        --output_folder outputs/m2svid \
+```
+
+
 
 
 # M2SVid: End-to-End Inpainting and Refinement for Monocular-to-Stereo Video Conversion
