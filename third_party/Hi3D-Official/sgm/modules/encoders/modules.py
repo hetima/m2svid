@@ -586,12 +586,15 @@ class FrozenOpenCLIPImageEmbedder(AbstractEmbModel):
         num_image_crops=0,
         output_tokens=False,
         init_device=None,
+        load_pretrained=True,
     ):
         super().__init__()
         model, _, _ = open_clip.create_model_and_transforms(
             arch,
             device=torch.device(default(init_device, "cpu")),
-            pretrained=version,
+            # pretrained=version,
+            pretrained=version if load_pretrained else None,
+            load_weights=load_pretrained,  # ← False if combined
         )
         del model.transformer
         self.model = model
