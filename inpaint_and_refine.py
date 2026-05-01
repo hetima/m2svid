@@ -42,16 +42,17 @@ from m2svid.utils.video_utils import open_ffmpeg_process, get_video_fps
 from m2svid.data.utils import get_video_frames, apply_closing, apply_dilation
 from m2svid.utils.anaglyph import make_anaglyph_video
 
-
 parser = argparse.ArgumentParser()
-parser.add_argument( "--model_config", type=str)
-parser.add_argument( "--ckpt", type=str)
-parser.add_argument( "--video_path", type=str)
-parser.add_argument( "--reprojected_path", type=str)
-parser.add_argument( "--reprojected_mask_path", type=str)
-parser.add_argument( "--output_folder", type=str)
-parser.add_argument( "--reprojected_closing_holes_kernel", type=int, default=11)
-parser.add_argument( "--mask_antialias", type=int, default=False)
+parser.add_argument("--model_config", type=str)
+parser.add_argument("--ckpt", type=str)
+parser.add_argument("--video_path", type=str)
+parser.add_argument("--reprojected_path", type=str)
+parser.add_argument("--reprojected_mask_path", type=str)
+parser.add_argument("--output_folder", type=str)
+parser.add_argument("--reprojected_closing_holes_kernel", type=int, default=11)
+parser.add_argument("--mask_antialias", type=int, default=False)
+parser.add_argument("--save_sbs", action="store_true", default=True, help="Save side-by-side video")
+parser.add_argument("--save_anaglyph", action="store_true", help="Save anaglyph video")
 args = parser.parse_args()
 
 
@@ -67,27 +68,37 @@ reprojected_closing_holes_kernel = args.reprojected_closing_holes_kernel
 mask_antialias = args.mask_antialias
 output_folder = args.output_folder
 
-# load and preprocess videos
+# load and preprocess videos (probe once, reuse)
+video_probe = ffmpeg.probe(args.video_path)
+fps = get_video_fps(args.video_path, video_probe)
+
 input_video = get_video_frames(args.video_path)
 reprojected = get_video_frames(args.reprojected_path)
 reprojected_mask = get_video_frames(args.reprojected_mask_path, video_is_grayscale=True)
-fps = get_video_fps(args.video_path, ffmpeg.probe(args.video_path))
 
 reprojected_mask = apply_closing(reprojected_mask, reprojected_closing_holes_kernel)
 reprojected[reprojected_mask.repeat(1, 3, 1, 1) > 0.5] = 0
 reprojected_mask = apply_dilation(reprojected_mask, 3)
 reprojected_mask = reprojected_mask.repeat(1, 3, 1, 1)
 
-input_video = input_video.permute(1, 0, 2, 3).float() * 2 - 1 # [t,c,h,w] -> [c,t,h,w]
-reprojected = reprojected.permute(1, 0, 2, 3).float() * 2 - 1 # [t,c,h,w] -> [c,t,h,w]
-reprojected_mask = reprojected_mask.permute(1, 0, 2, 3).float() * 2 - 1 # [t,c,h,w] -> [c,t,h,w]
+input_video = input_video.permute(1, 0, 2, 3).float() * 2 - 1  # [t,c,h,w] -> [c,t,h,w]
+reprojected = reprojected.permute(1, 0, 2, 3).float() * 2 - 1  # [t,c,h,w] -> [c,t,h,w]
+reprojected_mask = (
+    reprojected_mask.permute(1, 0, 2, 3).float() * 2 - 1
+)  # [t,c,h,w] -> [c,t,h,w]
 
-c,t,h,w = reprojected_mask.shape
+c, t, h, w = reprojected_mask.shape
 downsampled_resolution = [int(h / 8), int(w / 8)]
-reprojected_mask = reprojected_mask.permute(1, 0, 2, 3).float() # [c,t,h,w] -> [t,c,h,w]
-reprojected_mask = transforms.Resize(downsampled_resolution, antialias=mask_antialias)(reprojected_mask)
+reprojected_mask = reprojected_mask.permute(
+    1, 0, 2, 3
+).float()  # [c,t,h,w] -> [t,c,h,w]
+reprojected_mask = transforms.Resize(downsampled_resolution, antialias=mask_antialias)(
+    reprojected_mask
+)
 reprojected_mask = reprojected_mask[:, [0]]
-reprojected_mask = reprojected_mask.permute(1, 0, 2, 3).float() # [t,c,h,w] -> [c,t,h,w]
+reprojected_mask = reprojected_mask.permute(
+    1, 0, 2, 3
+).float()  # [t,c,h,w] -> [c,t,h,w]
 
 
 chunk_size = denoising_model.num_samples  # 25
@@ -126,11 +137,24 @@ def save_video(video, fps, path):
     torchvision.io.write_video(path, frames, fps=int(fps), options={"crf": "17"})
 
 
-sbs_video = torch.cat([input_video, generated_video], dim=-1)
-anaglyph = make_anaglyph_video(input_video, generated_video, unnormalized_videos=True)
-
 video_name = os.path.splitext(os.path.basename(args.video_path))[0]
 os.makedirs(output_folder, exist_ok=True)
-save_video(generated_video[None], fps, os.path.join(output_folder, f'{video_name}_generated.mp4'))
-save_video(sbs_video[None], fps, os.path.join(output_folder, f'{video_name}_sbs.mp4'))
-save_video(anaglyph[None], fps, os.path.join(output_folder, f'{video_name}_anaglyph.mp4'))
+save_video(
+    generated_video[None],
+    fps,
+    os.path.join(output_folder, f"{video_name}_generated.mp4"),
+)
+
+if args.save_sbs:
+    sbs_video = torch.cat([input_video, generated_video], dim=-1)
+    save_video(
+        sbs_video[None], fps, os.path.join(output_folder, f"{video_name}_sbs.mp4")
+    )
+
+if args.save_anaglyph:
+    anaglyph = make_anaglyph_video(
+        input_video, generated_video, unnormalized_videos=True
+    )
+    save_video(
+        anaglyph[None], fps, os.path.join(output_folder, f"{video_name}_anaglyph.mp4")
+    )
