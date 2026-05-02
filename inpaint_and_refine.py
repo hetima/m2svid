@@ -35,7 +35,6 @@ from torchvision import transforms
 import torch
 import numpy as np
 from tqdm import tqdm
-import torchvision.io
 from omegaconf import OmegaConf
 from sgm.util import instantiate_from_config
 
@@ -179,11 +178,29 @@ with torch.inference_mode():
 generated_video = torch.cat(generated_chunks, dim=1)  # [c, t_total, h, w]
 
 
+def check_unique_path(path: str) -> str:
+    """pathのファイルが存在する場合、_01, _02, ... のサフィックスを付けてユニークなパスを返す。"""
+    if not os.path.exists(path):
+        return path
+    base, ext = os.path.splitext(path)
+    for i in range(1, 99):
+        candidate = f"{base}_{i:02}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+    return path
+
 def save_video(video, fps, path):
-    frames = video.cpu().numpy().transpose(0, 2, 3, 4, 1)
-    frames = np.concatenate(frames)
+    path = check_unique_path(path)
+    frames = video.cpu().numpy().transpose(0, 2, 3, 4, 1)  # [1, T, H, W, C]
+    frames = np.concatenate(frames)  # [T, H, W, C]
     frames = (((frames + 1) / 2).clip(0, 1) * 255).astype(np.uint8)
-    torchvision.io.write_video(path, frames, fps=int(fps), options={"crf": "17"})
+
+    t, h, w, c = frames.shape
+    process = open_ffmpeg_process(path, w, h, fps, crf=17)
+    for frame in frames:
+        process.stdin.write(frame.tobytes())
+    process.stdin.close()
+    process.wait()
 
 
 video_name = os.path.splitext(os.path.basename(args.video_path))[0]
