@@ -35,6 +35,8 @@ uv pip install -r requirements.txt
 
 `inpaint_and_refine.py`に`--save_sbs`と`--save_anaglyph`のフラグを付けて生成するファイルを選べるようにしました。sbsはデフォルトで生成されます。オフにしたい場合`--no-save_sbs`を付けてください。
 
+また、`--chunk_size`パラメータも付けました。一度に処理するフレーム数を指定できます（デフォルト10、最大25）。VRAM12GBで512x512の動画をそれなりの速度で処理できる限界は12くらいです。
+
 ## m2svid_combined_quanto_int8.safetensors
 `m2svid_weights.pt`と`open_clip_pytorch_model.bin`を合体させたものです。[Hugging Face](https://huggingface.co/hrktxz/m2svid_combined) からダウンロードできます。
 

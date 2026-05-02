@@ -34,6 +34,7 @@ import ffmpeg
 from torchvision import transforms
 import torch
 import numpy as np
+from tqdm import tqdm
 import torchvision.io
 from omegaconf import OmegaConf
 from sgm.util import instantiate_from_config
@@ -60,6 +61,9 @@ parser.add_argument(
 parser.add_argument("--save_anaglyph", action="store_true", help="Save anaglyph video")
 parser.add_argument("--enable_vae_fp16", action="store_true", default=False, help="Enable FP16 autocast for VAE (may reduce quality)")
 parser.add_argument("--quanto_int8", action="store_true", default=False, help="Load optimum-quanto int8 quantized checkpoint (reduces GPU memory)")
+parser.add_argument("--chunk_size", type=int, default=10, help="Number of target frames to generate per chunk (VRAM reduction)")
+# --overlap は効果が薄い上にやたら時間がかかるので0推奨
+parser.add_argument("--overlap", type=int, default=0, help="Number of overlapping frames on each side of a chunk for temporal continuity")
 args = parser.parse_args()
 
 # ckptファイル名に"quanto_int8"が含まれていれば自動的に有効化
@@ -125,31 +129,52 @@ reprojected_mask = reprojected_mask.permute(
 ).float()  # [t,c,h,w] -> [c,t,h,w]
 
 
-chunk_size = denoising_model.num_samples  # 25
-num_chunks = (t + chunk_size - 1) // chunk_size
+chunk_size = args.chunk_size
+overlap = args.overlap
+assert chunk_size + 2 * overlap <= denoising_model.num_samples, (
+    f"chunk_size({chunk_size}) + 2*overlap({overlap}) = {chunk_size + 2 * overlap} "
+    f"must be <= num_samples({denoising_model.num_samples})"
+)
+stride = chunk_size  # target frames to advance per chunk
+num_chunks = max(1, (t + stride - 1) // stride)  # ceil(t / stride)
 
 generated_chunks = []
 
 with torch.inference_mode():
-    for chunk_idx in range(num_chunks):
-        start = chunk_idx * chunk_size
-        end = min(start + chunk_size, t)
-        print(
-            f"Processing chunk {chunk_idx + 1}/{num_chunks}, frames {start}-{end - 1}"
+    pbar = tqdm(range(num_chunks), desc="Generating chunks")
+    for chunk_idx in pbar:
+        # --- compute target frame range (what we want to keep) ---
+        tgt_start = chunk_idx * stride
+        tgt_end = min(tgt_start + chunk_size, t)
+
+        # --- compute input range including overlap ---
+        inp_start = max(0, tgt_start - overlap)
+        inp_end = min(tgt_end + overlap, t)
+        actual_overlap_left = tgt_start - inp_start
+        actual_overlap_right = inp_end - tgt_end
+
+        pbar.set_description(
+            # f"chunk {chunk_idx + 1}/{num_chunks}, "
+            f"[input {inp_start}-{inp_end - 1}, "
+            f"output {tgt_start}-{tgt_end - 1}]"
         )
 
         chunk_batch = {
-            "video": input_video[None, :, start:end].cuda(),
-            "video_2nd_view": input_video[None, :, start:end].cuda(),
-            "reprojected_video": reprojected[None, :, start:end].cuda(),
-            "reprojected_mask": reprojected_mask[None, :, start:end].cuda(),
+            "video": input_video[None, :, inp_start:inp_end].cuda(),
+            "video_2nd_view": input_video[None, :, inp_start:inp_end].cuda(),
+            "reprojected_video": reprojected[None, :, inp_start:inp_end].cuda(),
+            "reprojected_mask": reprojected_mask[None, :, inp_start:inp_end].cuda(),
             "fps_id": torch.tensor([fps]).cuda(),
             "caption": [""],
             "motion_bucket_id": torch.tensor([127]).cuda(),
         }
 
         chunk_output = denoising_model.generate(chunk_batch)["generated-video"]
-        generated_chunks.append(chunk_output[0].cpu())
+        # chunk_output shape: [1, C, T_input, H, W]
+        # Extract only the target (center) frames
+        center_start = actual_overlap_left
+        center_end = chunk_output.shape[2] - actual_overlap_right
+        generated_chunks.append(chunk_output[0, :, center_start:center_end].cpu())
 
 generated_video = torch.cat(generated_chunks, dim=1)  # [c, t_total, h, w]
 
