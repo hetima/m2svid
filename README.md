@@ -1,7 +1,7 @@
 # About this fork
 - conda不要でvenvで使えるようにしたました（最低限の`requirements.txt`）
 - なんか最終処理が25フレームまでしか対応してないみたいなので分割処理して結合するようにしたました（`inpaint_and_refine.py`）
-- `m2svid_weights.pt`と`open_clip_pytorch_model.bin`を合体させfp16に変換した`m2svid_combined_fp16.safetensors`
+- `m2svid_weights.pt`と`open_clip_pytorch_model.bin`を合体させた safetensors
 
 ## インストール
 
@@ -33,22 +33,33 @@ uv pip install -r requirements.txt
 
 使い方はオリジナルと同じです。「Get started」の説明にあるモデルをダウンロードして配置し、「Inference」の項目のスクリプトを実行。`PYTHONPATH`の追加はスクリプト内でするようにしたので不要です。
 
-## m2svid_combined_fp16.safetensors
+`inpaint_and_refine.py`に`--save_sbs`と`--save_anaglyph`のフラグを付けて生成するファイルを選べるようにしました。sbsはデフォルトで生成されます。オフにしたい場合`--no-save_sbs`を付けてください。
 
-`m2svid_weights.pt`と`open_clip_pytorch_model.bin`を合体させfp16に変換したものです。[Hugging Face](https://huggingface.co/hrktxz/m2svid_combined) からダウンロードできます。
+## m2svid_combined_quanto_int8.safetensors
+`m2svid_weights.pt`と`open_clip_pytorch_model.bin`を合体させたものです。[Hugging Face](https://huggingface.co/hrktxz/m2svid_combined) からダウンロードできます。
 
-`--model_config`に`m2svid_combined.yaml`を指定して使用してください。
+optimum-quantoを使って一部パラメータをint8にしたものです。VRAM12GBでメモリ消費量はあんまり変わらない気がしますが、処理速度は速くなっています。`--model_config`に`m2svid_combined.yaml`を指定し、`--quanto_int8`フラグを付け加えて実行してください（ファイル名に quanto_int8 が含まれていたら自動判定するようにはしています）
 
 ```sh
 python inpaint_and_refine.py  \
         --mask_antialias 0 \
         --model_config configs/m2svid_combined.yaml \
-        --ckpt ckpts/m2svid_combined_fp16.safetensors \
+        --ckpt ckpts/m2svid_combined_quanto_int8.safetensors \
         --video_path demo/input.mp4  \
         --reprojected_path outputs/reprojected/input_reprojected.mp4 \
         --reprojected_mask_path outputs/reprojected/input_reprojected_mask.mp4\
         --output_folder outputs/m2svid \
+        --quanto_int8 \
 ```
+
+
+## m2svid_combined_fp16.safetensors
+
+fp16 に変換したものです。処理速度やメモリ消費量はたぶん変わりません。あんまり意味ありません。ファイルサイズを削減するだけです。
+
+`--model_config`に`m2svid_combined.yaml`を指定して使用してください。`--quanto_int8` フラグは付けないでください。
+
+
 
 
 

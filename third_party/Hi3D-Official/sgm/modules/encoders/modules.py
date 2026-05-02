@@ -866,7 +866,7 @@ class LowScaleEncoder(nn.Module):
             alphas_cumprod.shape[0] == self.num_timesteps
         ), "alphas have to be defined for each timestep"
 
-        to_torch = partial(torch.tensor, dtype=torch.float32)
+        to_torch = partial(torch.tensor, dtype=torch.float16)
 
         self.register_buffer("betas", to_torch(betas))
         self.register_buffer("alphas_cumprod", to_torch(alphas_cumprod))

@@ -24,4 +24,4 @@ triton-windows
 # xformers==0.0.33 # torch==2.9 で上書きされる
 # xformers==0.0.33.post2 # これは2.9.1用らしいがうまく動かない
 # pip install xformers==0.0.33 --no-deps で torch の上書きを避けて入れる
-
+optimum-quanto

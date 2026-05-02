@@ -51,18 +51,42 @@ parser.add_argument("--reprojected_mask_path", type=str)
 parser.add_argument("--output_folder", type=str)
 parser.add_argument("--reprojected_closing_holes_kernel", type=int, default=11)
 parser.add_argument("--mask_antialias", type=int, default=False)
-parser.add_argument("--save_sbs", action="store_true", default=True, help="Save side-by-side video")
+parser.add_argument(
+    "--save_sbs",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help="Save side-by-side video",
+)
 parser.add_argument("--save_anaglyph", action="store_true", help="Save anaglyph video")
+parser.add_argument("--enable_vae_fp16", action="store_true", default=False, help="Enable FP16 autocast for VAE (may reduce quality)")
+parser.add_argument("--quanto_int8", action="store_true", default=False, help="Load optimum-quanto int8 quantized checkpoint (reduces GPU memory)")
 args = parser.parse_args()
+
+# ckptファイル名に"quanto_int8"が含まれていれば自動的に有効化
+if "quanto_int8" in os.path.basename(args.ckpt):
+    args.quanto_int8 = True
 
 
 seed = random.randint(0, 65535)
 seed_everything(seed)
 
 config = OmegaConf.load(args.model_config)
-denoising_model = instantiate_from_config(config.model).cpu()
-denoising_model.init_from_ckpt(args.ckpt)
-denoising_model = denoising_model.cuda().half().eval()
+# Override VAE autocast setting based on CLI flag (default: VAE runs in FP32 for stability)
+config.model.params.disable_first_stage_autocast = not args.enable_vae_fp16
+
+if args.quanto_int8:
+    # optimum-quanto int8量子化済みモデルの読み込み
+    # first_stage_model (VAE) は除外: Conv2dがtimesteps kwargを使うためQConv2dと非互換
+    from optimum.quanto import quantize, freeze, qint8
+    denoising_model = instantiate_from_config(config.model).half()
+    quantize(denoising_model, weights=qint8, exclude=["first_stage_model*"])
+    freeze(denoising_model)
+    denoising_model.init_from_ckpt(args.ckpt)
+    denoising_model = denoising_model.cuda().eval()
+else:
+    denoising_model = instantiate_from_config(config.model).half()
+    denoising_model.init_from_ckpt(args.ckpt)
+    denoising_model = denoising_model.cuda().eval()
 
 reprojected_closing_holes_kernel = args.reprojected_closing_holes_kernel
 mask_antialias = args.mask_antialias

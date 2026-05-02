@@ -9,7 +9,7 @@ class LitEma(nn.Module):
             raise ValueError("Decay must be between 0 and 1")
 
         self.m_name2s_name = {}
-        self.register_buffer("decay", torch.tensor(decay, dtype=torch.float32))
+        self.register_buffer("decay", torch.tensor(decay, dtype=torch.float16))
         self.register_buffer(
             "num_updates",
             torch.tensor(0, dtype=torch.int)

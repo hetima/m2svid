@@ -65,7 +65,7 @@ class LegacyDDPMDiscretization(Discretization):
         )
         alphas = 1.0 - betas
         self.alphas_cumprod = np.cumprod(alphas, axis=0)
-        self.to_torch = partial(torch.tensor, dtype=torch.float32)
+        self.to_torch = partial(torch.tensor, dtype=torch.float16)
 
     def get_sigmas(self, n, device="cpu"):
         if n < self.num_timesteps:
@@ -76,6 +76,6 @@ class LegacyDDPMDiscretization(Discretization):
         else:
             raise ValueError
 
-        to_torch = partial(torch.tensor, dtype=torch.float32, device=device)
+        to_torch = partial(torch.tensor, dtype=torch.float16, device=device)
         sigmas = to_torch((1 - alphas_cumprod) / alphas_cumprod) ** 0.5
         return torch.flip(sigmas, (0,))
