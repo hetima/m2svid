@@ -25,7 +25,7 @@ PYTHONPATH="third_party/DepthCrafter/::${PYTHONPATH}" python third_party/DepthCr
 
 source /opt/conda/bin/activate ""
 conda activate sgm
-PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTHONPATH}" python warping.py  \
+PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}" python warping.py  \
         --video_path demo/input.mp4 \
         --depth_path outputs/depthcrafter/input.npz \
         --output_path_reprojected outputs/reprojected/input_reprojected.mp4  \
@@ -35,7 +35,7 @@ PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTH
 
 source /opt/conda/bin/activate ""
 conda activate sgm
-PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTHONPATH}" python inpaint_and_refine.py  \
+PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}" python inpaint_and_refine.py  \
         --mask_antialias 0 \
         --model_config configs/m2svid.yaml \
         --ckpt ckpts/m2svid_weights.pt \

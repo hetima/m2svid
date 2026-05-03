@@ -17,12 +17,12 @@ limitations under the License.
 import sys
 import os
 
-# PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTHONPATH}"
+# PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}"
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 for _p in [
     _SCRIPT_DIR,
-    os.path.join(_SCRIPT_DIR, "third_party", "Hi3D-Official"),
-    os.path.join(_SCRIPT_DIR, "third_party", "pytorch-msssim"),
+    os.path.join(_SCRIPT_DIR, "third_party", "Hi3D_Official"),
+    os.path.join(_SCRIPT_DIR, "third_party", "pytorch_msssim"),
 ]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -36,7 +36,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 from omegaconf import OmegaConf
-from sgm.util import instantiate_from_config
+from third_party.Hi3D_Official.sgm.util import instantiate_from_config
 
 from m2svid.utils.video_utils import open_ffmpeg_process, get_video_fps
 from m2svid.data.utils import get_video_frames, apply_closing, apply_dilation
