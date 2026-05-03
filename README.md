@@ -2,22 +2,13 @@
 - conda不要でvenvで使えるようにしたました（最低限の`requirements.txt`）
 - なんか最終処理が25フレームまでしか対応してないみたいなので分割処理して結合するようにしたました（`inpaint_and_refine.py`）
 - `m2svid_weights.pt`と`open_clip_pytorch_model.bin`を合体させた safetensors
+- サブモジュールのリポジトリを直接内包
 
 ## インストール
 
-サブモジュールを含むので`--recursive`を付けてください。
-
 ```
-git clone --recursive https://github.com/hetima/m2svid.git
+git clone https://github.com/hetima/m2svid.git
 ```
-
-付け忘れたら後から
-
-```
-git submodule update --init --recursive
-```
-
-と実行すれば取ってきます。
 
 >Windows 11、python 3.12 の環境で動作確認しています。
 
@@ -145,7 +136,7 @@ conda activate depthcrafter
 PYTHONPATH="third_party/DepthCrafter/::${PYTHONPATH}" python third_party/DepthCrafter/run.py  \
         --video-path demo/input.mp4 --save_folder outputs/depthcrafter --save_npz True --num_inference_steps 25 --max_res 1024
 
-PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTHONPATH}" python warping.py  \
+PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}" python warping.py  \
         --video_path demo/input.mp4 \
         --depth_path outputs/depthcrafter/input.npz \
         --output_path_reprojected outputs/reprojected/input_reprojected.mp4  \
@@ -158,7 +149,7 @@ PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTH
 ```bash
 source /opt/conda/bin/activate ""
 conda activate sgm
-PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTHONPATH}" python inpaint_and_refine.py  \
+PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}" python inpaint_and_refine.py  \
         --mask_antialias 0 \
         --model_config configs/m2svid.yaml \
         --ckpt ckpts/m2svid_weights.pt \
@@ -174,7 +165,7 @@ PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTH
 ```bash
 source /opt/conda/bin/activate ""
 conda activate sgm
-PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTHONPATH}" python inpaint_and_refine.py  \
+PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}" python inpaint_and_refine.py  \
         --mask_antialias 0 \
         --model_config configs/m2svid_no_fullatten.yaml \
         --ckpt ckpts/m2svid_no_full_atten_weights.pt \
@@ -205,14 +196,14 @@ We used the [Ego4D](https://ego4d-data.org/) and [Stereo4D](https://stereo4d.git
 ```bash
 source /opt/conda/bin/activate ""
 conda activate sgm
-PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTHONPATH}" python make_m2svid_init.py
+PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}" python make_m2svid_init.py
 ```
 
 3. Run training 
 ```bash
 source /opt/conda/bin/activate ""
 conda activate sgm
-PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTHONPATH}" python third_party/Hi3D-Official/train_test_updated.py \
+PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}" python third_party/Hi3D_Official/train_test_updated.py \
     --base configs/training/m2svid_train.yaml \
     --no-test True \
     --train True \
@@ -226,7 +217,7 @@ Evaluation on stereo4d:
 ```bash
 source /opt/conda/bin/activate ""
 conda activate sgm
-PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTHONPATH}" python third_party/Hi3D-Official/train_test_updated.py \
+PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}" python third_party/Hi3D_Official/train_test_updated.py \
     --base configs/training/m2svid_train.yaml \
     --dataset_base configs/testing/stereo4d.yaml \
     --no-test False \
@@ -240,7 +231,7 @@ Evaluation on ego4d:
 ```bash
 source /opt/conda/bin/activate ""
 conda activate sgm
-PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTHONPATH}" python third_party/Hi3D-Official/train_test_updated.py \
+PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}" python third_party/Hi3D_Official/train_test_updated.py \
     --base configs/training/m2svid_train.yaml \
     --dataset_base configs/testing/ego4d.yaml \
     --no-test False \
@@ -258,7 +249,7 @@ source /opt/conda/bin/activate ""
 conda activate sgm
 
 # Evaluate on Stereo4D
-PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTHONPATH}" python third_party/Hi3D-Official/train_test_updated.py \
+PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}" python third_party/Hi3D_Official/train_test_updated.py \
     --base configs/testing/pretrained_m2svid.yaml \
     --dataset_base configs/testing/stereo4d.yaml \
     --no-test False \
@@ -266,7 +257,7 @@ PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTH
     --logdir outputs/training/m2svid 
 
 # Evaluate on Ego4D
-PYTHONPATH="./:./third_party/Hi3D-Official/:./third_party/pytorch-msssim/:${PYTHONPATH}" python third_party/Hi3D-Official/train_test_updated.py \
+PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}" python third_party/Hi3D_Official/train_test_updated.py \
     --base configs/training/pretrained_m2svid.yaml \
     --dataset_base configs/testing/stereo4d.yaml \
     --no-test False \
