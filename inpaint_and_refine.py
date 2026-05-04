@@ -29,6 +29,7 @@ for _p in [
 
 import random
 import argparse
+from datetime import datetime
 from pytorch_lightning import seed_everything
 import ffmpeg
 from torchvision import transforms
@@ -49,6 +50,7 @@ parser.add_argument("--video_path", type=str)
 parser.add_argument("--reprojected_path", type=str)
 parser.add_argument("--reprojected_mask_path", type=str)
 parser.add_argument("--output_folder", type=str)
+parser.add_argument("--output_basename", type=str, default=None, help="Output filename basename (default: derived from video_path)")
 parser.add_argument("--reprojected_closing_holes_kernel", type=int, default=11)
 parser.add_argument("--mask_antialias", type=int, default=False)
 parser.add_argument(
@@ -189,8 +191,41 @@ def check_unique_path(path: str) -> str:
             return candidate
     return path
 
+
+def check_unique_paths(files: list) -> str:
+    """filesのリストをチェックし、必要な最大のサフィックス文字列を返す。
+
+    いずれのファイルも存在しなければ空文字列を返す。
+    ファイルが存在する場合、リスト内で最も大きい _NN サフィックスを返す。
+    99を超える場合は _YYYYMMDD_HHMMSS 形式のタイムスタンプを返す。
+    """
+    max_suffix = 0
+    any_exists = False
+    for path in files:
+        if not os.path.exists(path):
+            continue
+        any_exists = True
+        base, ext = os.path.splitext(path)
+        for i in range(1, 100):
+            candidate = f"{base}_{i:02}{ext}"
+            if not os.path.exists(candidate):
+                if i - 1 > max_suffix:
+                    max_suffix = i - 1
+                break
+        else:
+            # 99まで全て存在
+            max_suffix = 99
+
+    if not any_exists:
+        return ""
+
+    if max_suffix >= 99:
+        return datetime.now().strftime("_%Y%m%d_%H%M%S")
+
+    return f"_{max_suffix + 1:02d}"
+
+
 def save_video(video, fps, path):
-    path = check_unique_path(path)
     frames = video.cpu().numpy().transpose(0, 2, 3, 4, 1)  # [1, T, H, W, C]
     frames = np.concatenate(frames)  # [T, H, W, C]
     frames = (((frames + 1) / 2).clip(0, 1) * 255).astype(np.uint8)
@@ -203,24 +238,34 @@ def save_video(video, fps, path):
     process.wait()
 
 
-video_name = os.path.splitext(os.path.basename(args.video_path))[0]
+video_name = args.output_basename if args.output_basename else os.path.splitext(os.path.basename(args.video_path))[0]
 os.makedirs(output_folder, exist_ok=True)
-save_video(
-    generated_video[None],
-    fps,
-    os.path.join(output_folder, f"{video_name}_generated.mp4"),
-)
+
+# 3種の出力パスを定義
+gen_path = os.path.join(output_folder, f"{video_name}_generated.mp4")
+sbs_path = os.path.join(output_folder, f"{video_name}_sbs.mp4")
+anaglyph_path = os.path.join(output_folder, f"{video_name}_anaglyph.mp4")
+
+# 統一サフィックスを決定
+paths_to_check = [gen_path, sbs_path, anaglyph_path]
+suffix = check_unique_paths(paths_to_check)
+
+if suffix:
+    base_gen, ext_gen = os.path.splitext(gen_path)
+    gen_path = f"{base_gen}{suffix}{ext_gen}"
+    base_sbs, ext_sbs = os.path.splitext(sbs_path)
+    sbs_path = f"{base_sbs}{suffix}{ext_sbs}"
+    base_ana, ext_ana = os.path.splitext(anaglyph_path)
+    anaglyph_path = f"{base_ana}{suffix}{ext_ana}"
+
+save_video(generated_video[None], fps, gen_path)
 
 if args.save_sbs:
     sbs_video = torch.cat([input_video, generated_video], dim=-1)
-    save_video(
-        sbs_video[None], fps, os.path.join(output_folder, f"{video_name}_sbs.mp4")
-    )
+    save_video(sbs_video[None], fps, sbs_path)
 
 if args.save_anaglyph:
     anaglyph = make_anaglyph_video(
         input_video, generated_video, unnormalized_videos=True
     )
-    save_video(
-        anaglyph[None], fps, os.path.join(output_folder, f"{video_name}_anaglyph.mp4")
-    )
+    save_video(anaglyph[None], fps, anaglyph_path)
