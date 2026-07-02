@@ -23,10 +23,10 @@ def run_command(args: list[str]) -> None:
     subprocess.run(args, cwd=APP_DIR, check=True)
 
 
-def find_output_video(base_name: str, suffix: str, started_at: float) -> Path | None:
+def find_output_video(base_name: str, suffix: str, extension: str, started_at: float) -> Path | None:
     """今回の実行で生成された動画を探す。"""
     candidates = sorted(
-        OUTPUT_ROOT.glob(f"{base_name}_{suffix}*.mp4"),
+        OUTPUT_ROOT.glob(f"{base_name}_{suffix}*{extension}"),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
@@ -36,7 +36,14 @@ def find_output_video(base_name: str, suffix: str, started_at: float) -> Path | 
     return candidates[0] if candidates else None
 
 
-def convert_video(video_path: str | None, chunk_size: int, checkpoint_kind: str, progress=gr.Progress()):
+def convert_video(
+    video_path: str | None,
+    chunk_size: int,
+    checkpoint_kind: str,
+    output_format: str,
+    save_sbs: bool,
+    progress=gr.Progress(),
+):
     """アップロード動画からM2SVIDの生成動画を作成する。"""
     if not video_path:
         raise gr.Error("動画をアップロードしてください。")
@@ -97,37 +104,47 @@ def convert_video(video_path: str | None, chunk_size: int, checkpoint_kind: str,
             ]
         )
 
-    progress(0.65, desc="Inpaint and refineを実行中")
-    run_command(
-        [
-            sys.executable,
-            "inpaint_and_refine.py",
-            "--mask_antialias",
-            "0",
-            "--model_config",
-            str(CONFIG_PATH),
-            "--ckpt",
-            str(checkpoint_path),
-            "--video_path",
-            str(input_path),
-            "--reprojected_path",
-            str(reprojected_path),
-            "--reprojected_mask_path",
-            str(reprojected_mask_path),
-            "--output_folder",
-            str(OUTPUT_ROOT),
-            "--save_sbs",
-            "--chunk_size",
-            str(int(chunk_size)),
-        ]
-    )
+    refine_args = [
+        sys.executable,
+        "inpaint_and_refine.py",
+        "--mask_antialias",
+        "0",
+        "--model_config",
+        str(CONFIG_PATH),
+        "--ckpt",
+        str(checkpoint_path),
+        "--video_path",
+        str(input_path),
+        "--reprojected_path",
+        str(reprojected_path),
+        "--reprojected_mask_path",
+        str(reprojected_mask_path),
+        "--output_folder",
+        str(OUTPUT_ROOT),
+        "--chunk_size",
+        str(int(chunk_size)),
+    ]
+    extension = ".mov" if output_format == "ProRes.mov" else ".mp4"
+    if output_format == "ProRes.mov":
+        refine_args.append("--use_prores")
+    refine_args.append("--save_sbs" if save_sbs else "--no-save_sbs")
 
-    sbs_path = find_output_video(base_name, "sbs", started_at)
-    if sbs_path is None:
-        raise gr.Error("SBS動画が見つかりませんでした。")
+    progress(0.65, desc="Inpaint and refineを実行中")
+    run_command(refine_args)
+
+    generated_path = find_output_video(base_name, "generated", extension, started_at)
+    if generated_path is None:
+        raise gr.Error("Generated動画が見つかりませんでした。")
+
+    download_paths = [str(generated_path)]
+    if save_sbs:
+        sbs_path = find_output_video(base_name, "sbs", extension, started_at)
+        if sbs_path is None:
+            raise gr.Error("SBS動画が見つかりませんでした。")
+        download_paths.append(str(sbs_path))
 
     progress(1.0, desc="完了")
-    return str(sbs_path), str(sbs_path)
+    return str(generated_path), download_paths
 
 
 def clean_outputs() -> str:
@@ -158,16 +175,22 @@ with gr.Blocks(title="M2SVID") as demo:
                 choices=["fp16", "int8"],
                 value="fp16",
             )
+            output_format = gr.Radio(
+                label="Output format",
+                choices=["x264.mp4", "ProRes.mov"],
+                value="x264.mp4",
+            )
+            save_sbs = gr.Checkbox(label="Generate SBS", value=True)
             run_button = gr.Button("Generate", variant="primary")
             clean_button = gr.Button("Clean outputs")
             clean_status = gr.Textbox(label="Status", interactive=False)
         with gr.Column():
             video_output = gr.Video(label="Generated video")
-            download_output = gr.File(label="Download")
+            download_output = gr.File(label="Download", file_count="multiple")
 
     run_button.click(
         fn=convert_video,
-        inputs=[video_input, chunk_size, checkpoint],
+        inputs=[video_input, chunk_size, checkpoint, output_format, save_sbs],
         outputs=[video_output, download_output],
     )
     clean_button.click(fn=clean_outputs, outputs=clean_status)
