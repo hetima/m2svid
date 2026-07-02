@@ -3,6 +3,7 @@
 - なんか最終処理が25フレームまでしか対応してないみたいなので分割処理して結合するようにしたました（`inpaint_and_refine.py`）
 - `m2svid_weights.pt`と`open_clip_pytorch_model.bin`を合体させた safetensors
 - サブモジュールのリポジトリを直接内包
+- Gradioインターフェイス
 
 ## インストール
 
@@ -24,9 +25,13 @@ uv pip install -r requirements.txt
 
 使い方はオリジナルと同じです。「Get started」の説明にあるモデルをダウンロードして配置し、「Inference」の項目のスクリプトを実行。`PYTHONPATH`の追加はスクリプト内でするようにしたので不要です。
 
+必要なモデルは [Hugging Face](https://huggingface.co/hrktxz/m2svid_models) にまとめています。`ckpts`という名前のフォルダを作ってこれをそのまま配置すればOKです。
+
 `inpaint_and_refine.py`に`--save_sbs`と`--save_anaglyph`のフラグを付けて生成するファイルを選べるようにしました。sbsはデフォルトで生成されます。オフにしたい場合`--no-save_sbs`を付けてください。
 
 また、`--chunk_size`パラメータも付けました。一度に処理するフレーム数を指定できます（デフォルト10、最大25）。VRAM12GBで512x512の動画をそれなりの速度で処理できる限界は12くらいです。
+
+`--use_prores`フラグも付けました。これを渡すとmp4ではなくProRes LTのmovを書き出します。
 
 ## m2svid_combined_quanto_int8.safetensors
 `m2svid_weights.pt`と`open_clip_pytorch_model.bin`を合体させたものです。[Hugging Face](https://huggingface.co/hrktxz/m2svid_combined) からダウンロードできます。
@@ -53,9 +58,75 @@ fp16 に変換したものです。処理速度やメモリ消費量はたぶん
 `--model_config`に`m2svid_combined.yaml`を指定して使用してください。`--quanto_int8` フラグは付けないでください。
 
 
+## Gradio
+
+`app.py` でGradioサーバーが立ち上がります。必要なモデルは全部自動で取ってきます。
 
 
+## CLIで使う例
 
+一発変換するPowerShellスクリプト例（リポジトリをカレントディレクトリにして実行してください）
+
+```ps1
+# conv filepath_to_convert [project_name]
+function global:conv() {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    # Set-Location "path/to/m2svid"
+
+    # setting
+    $outRootPath = "outputs"
+    $cnfg = "configs/m2svid_combined.yaml"
+    $ckpt = "ckpts/m2svid_combined/m2svid_combined_fp16.safetensors"
+    # $ckpt = "ckpts/m2svid_combined/m2svid_combined_quanto_int8.safetensors"
+
+    if ($null -eq $args[0]){
+        Write-Output "no file path"
+        return
+    }
+    if (!(Test-Path $args[0])) {
+        Write-Output "file path does not exists"
+        return
+    }
+    
+    $path = $args[0]
+    $fullPath = (Resolve-Path "$path").Path
+    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($path)
+
+    if ($null -eq $args[1]){
+        # $timestamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
+        # $projectName = "${timestamp}_${baseName}"
+        $projectName = "$baseName"
+    }else{
+        $projectName = $args[1]
+    }
+    $outPath = Join-Path -Path $outRootPath -ChildPath "$projectName"
+    [void](New-Item -Path $outPath -ItemType Directory -Force)
+
+    $npz = Join-Path -Path $outPath -ChildPath "${baseName}.npz"
+    if (!(Test-Path "$npz")) {
+        # --num_inference_steps 25
+        python third_party\DepthCrafter\run.py --video-path "$fullPath" --save_folder "$outPath" --save_npz True --num_inference_steps 5 --max_res 1024
+    }else{
+        Write-Host "npz exists. skip step 1."
+    }
+
+    $reprojected = Join-Path -Path $outPath -ChildPath "${baseName}_reprojected.mp4"
+    $reprojectedMask = Join-Path -Path $outPath -ChildPath "${baseName}_reprojected_mask.mp4"
+    if (!(Test-Path "$reprojected") -or !(Test-Path "$reprojectedMask")) {
+        # --disparity_perc 0.05
+        python warping.py --video_path "$fullPath" --depth_path "$npz" --output_path_reprojected "$reprojected" --output_path_mask "$reprojectedMask" --disparity_perc 0.1
+    }else{
+        Write-Host "reprojected exists. skip step 2."
+    }
+
+    python inpaint_and_refine.py --mask_antialias 0 --model_config "$cnfg" --ckpt "$ckpt" --video_path "$fullPath" --reprojected_path "$reprojected" --reprojected_mask_path "$reprojectedMask" --output_folder "$outRootPath" --use_prores --save_sbs --chunk_size 8
+
+    $sw.Stop()
+    Write-Host "Elapsed Time: $($sw.Elapsed.ToString("hh\:mm\:ss"))" -ForegroundColor Cyan
+}
+```
+
+以下オリジナルのREADME
 
 # M2SVid: End-to-End Inpainting and Refinement for Monocular-to-Stereo Video Conversion
 
