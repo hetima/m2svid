@@ -64,6 +64,7 @@ parser.add_argument("--save_anaglyph", action="store_true", help="Save anaglyph 
 parser.add_argument("--enable_vae_fp16", action="store_true", default=False, help="Enable FP16 autocast for VAE (may reduce quality)")
 parser.add_argument("--quanto_int8", action="store_true", default=False, help="Load optimum-quanto int8 quantized checkpoint (reduces GPU memory)")
 parser.add_argument("--chunk_size", type=int, default=10, help="Number of target frames to generate per chunk (VRAM reduction)")
+parser.add_argument("--use_prores", action="store_true", default=False, help="Save videos as ProRes 422 LT .mov")
 # --overlap は効果が薄い上にやたら時間がかかるので0推奨
 parser.add_argument("--overlap", type=int, default=0, help="Number of overlapping frames on each side of a chunk for temporal continuity")
 args = parser.parse_args()
@@ -247,7 +248,8 @@ def save_video(video, fps, path):
     """動画全体をNumPy化せず、1フレームずつffmpegへ書き出す。"""
     video = video[0]  # [1, C, T, H, W] -> [C, T, H, W]
     _, t, h, w = video.shape
-    process = open_ffmpeg_process(path, w, h, fps, crf=17)
+    use_prores = os.path.splitext(path)[1].lower() == ".mov"
+    process = open_ffmpeg_process(path, w, h, fps, crf=17, use_prores=use_prores)
     for i in range(t):
         process.stdin.write(frame_to_uint8(video[:, i]).tobytes())
     process.stdin.close()
@@ -257,7 +259,8 @@ def save_video(video, fps, path):
 def save_sbs_video(left_video, right_video, fps, path):
     """SBS動画を全体結合せず、左右1フレームずつ横結合して書き出す。"""
     _, t, h, w = left_video.shape
-    process = open_ffmpeg_process(path, w * 2, h, fps, crf=17)
+    use_prores = os.path.splitext(path)[1].lower() == ".mov"
+    process = open_ffmpeg_process(path, w * 2, h, fps, crf=17, use_prores=use_prores)
     for i in range(t):
         left_frame = frame_to_uint8(left_video[:, i])
         right_frame = frame_to_uint8(right_video[:, i])
@@ -270,9 +273,10 @@ video_name = args.output_basename if args.output_basename else os.path.splitext(
 os.makedirs(output_folder, exist_ok=True)
 
 # 3種の出力パスを定義
-gen_path = os.path.join(output_folder, f"{video_name}_generated.mp4")
-sbs_path = os.path.join(output_folder, f"{video_name}_sbs.mp4")
-anaglyph_path = os.path.join(output_folder, f"{video_name}_anaglyph.mp4")
+output_ext = ".mov" if args.use_prores else ".mp4"
+gen_path = os.path.join(output_folder, f"{video_name}_generated{output_ext}")
+sbs_path = os.path.join(output_folder, f"{video_name}_sbs{output_ext}")
+anaglyph_path = os.path.join(output_folder, f"{video_name}_anaglyph{output_ext}")
 
 # 統一サフィックスを決定
 paths_to_check = [gen_path, sbs_path, anaglyph_path]

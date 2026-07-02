@@ -42,7 +42,7 @@ def read_frames_in_batches_decord(vr, batch_size, start_frame=0):
         current_frame = end_frame
 
 
-def open_ffmpeg_process(output_path, width, height, fps, grayscale=False, no_compression=False, crf=16):
+def open_ffmpeg_process(output_path, width, height, fps, grayscale=False, no_compression=False, crf=16, use_prores=False):
     if grayscale:
         input_pix_fmt = 'gray'
         output_pix_fmt = 'gray'
@@ -50,8 +50,15 @@ def open_ffmpeg_process(output_path, width, height, fps, grayscale=False, no_com
         input_pix_fmt = 'rgb24'
         output_pix_fmt = 'yuv420p'
 
-
-    if no_compression:
+    if use_prores:
+        ffmpeg_process = (
+            ffmpeg
+            .input('pipe:', format='rawvideo', pix_fmt=input_pix_fmt, s=f'{width}x{height}', framerate=fps)
+            .output(output_path, vcodec='prores_ks', pix_fmt='yuv422p10le', **{'profile:v': '1'})
+            .global_args('-loglevel', 'error')
+            .run_async(pipe_stdin=True)
+        )
+    elif no_compression:
         ffmpeg_process = (
             ffmpeg
             .input('pipe:', format='rawvideo', pix_fmt=input_pix_fmt, s=f'{width}x{height}', framerate=fps)
@@ -218,6 +225,5 @@ def recover_disparity_from_png(png_path, original_min, original_max):
     disparity_16bit = imageio.imread(png_path).astype(np.float32)
     disparity_recovered = (disparity_16bit / 65535.0) * (original_max - original_min) + original_min
     return disparity_recovered
-
 
 
