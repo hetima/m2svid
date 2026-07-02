@@ -16,6 +16,7 @@ limitations under the License.
 
 import sys
 import os
+import gc
 
 # PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}"
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -176,8 +177,13 @@ with torch.inference_mode():
         center_start = actual_overlap_left
         center_end = chunk_output.shape[2] - actual_overlap_right
         generated_chunks.append(chunk_output[0, :, center_start:center_end].cpu())
+        del chunk_batch, chunk_output
 
 generated_video = torch.cat(generated_chunks, dim=1)  # [c, t_total, h, w]
+del generated_chunks, reprojected, reprojected_mask, denoising_model
+gc.collect()
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
 
 
 def check_unique_path(path: str) -> str:
@@ -225,15 +231,37 @@ def check_unique_paths(files: list) -> str:
     return f"_{max_suffix + 1:02d}"
 
 
-def save_video(video, fps, path):
-    frames = video.cpu().numpy().transpose(0, 2, 3, 4, 1)  # [1, T, H, W, C]
-    frames = np.concatenate(frames)  # [T, H, W, C]
-    frames = (((frames + 1) / 2).clip(0, 1) * 255).astype(np.uint8)
+def frame_to_uint8(frame):
+    """[-1, 1] の1フレームテンソルを ffmpeg 用の uint8 RGB 配列に変換する。"""
+    return (
+        ((frame.detach().cpu().float() + 1) / 2)
+        .clamp(0, 1)
+        .mul(255)
+        .byte()
+        .permute(1, 2, 0)
+        .numpy()
+    )
 
-    t, h, w, c = frames.shape
+
+def save_video(video, fps, path):
+    """動画全体をNumPy化せず、1フレームずつffmpegへ書き出す。"""
+    video = video[0]  # [1, C, T, H, W] -> [C, T, H, W]
+    _, t, h, w = video.shape
     process = open_ffmpeg_process(path, w, h, fps, crf=17)
-    for frame in frames:
-        process.stdin.write(frame.tobytes())
+    for i in range(t):
+        process.stdin.write(frame_to_uint8(video[:, i]).tobytes())
+    process.stdin.close()
+    process.wait()
+
+
+def save_sbs_video(left_video, right_video, fps, path):
+    """SBS動画を全体結合せず、左右1フレームずつ横結合して書き出す。"""
+    _, t, h, w = left_video.shape
+    process = open_ffmpeg_process(path, w * 2, h, fps, crf=17)
+    for i in range(t):
+        left_frame = frame_to_uint8(left_video[:, i])
+        right_frame = frame_to_uint8(right_video[:, i])
+        process.stdin.write(np.concatenate([left_frame, right_frame], axis=1).tobytes())
     process.stdin.close()
     process.wait()
 
@@ -259,10 +287,11 @@ if suffix:
     anaglyph_path = f"{base_ana}{suffix}{ext_ana}"
 
 save_video(generated_video[None], fps, gen_path)
+gc.collect()
 
 if args.save_sbs:
-    sbs_video = torch.cat([input_video, generated_video], dim=-1)
-    save_video(sbs_video[None], fps, sbs_path)
+    save_sbs_video(input_video, generated_video, fps, sbs_path)
+    gc.collect()
 
 if args.save_anaglyph:
     anaglyph = make_anaglyph_video(
