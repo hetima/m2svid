@@ -66,81 +66,35 @@ def convert_video(
     started_at = time.time()
     base_name = input_path.stem
     depth_model_id = DEPTH_MODELS[depth_model_label]
-    project_dir = OUTPUT_ROOT / base_name / depth_model_id
-    project_dir.mkdir(parents=True, exist_ok=True)
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
-    npz_path = project_dir / f"{base_name}.npz"
-    reprojected_path = project_dir / f"{base_name}_reprojected.mp4"
-    reprojected_mask_path = project_dir / f"{base_name}_reprojected_mask.mp4"
-
-    if not npz_path.exists():
-        progress(0.05, desc=f"{depth_model_label}を実行中")
-        run_command(
-            [
-                sys.executable,
-                "get_depth.py",
-                "--model_id",
-                depth_model_id,
-                "--video_path",
-                str(input_path),
-                "--save_folder",
-                str(project_dir),
-                "--save_npz",
-                "True",
-                "--num_inference_steps",
-                "5",
-                "--max_res",
-                "1024",
-            ]
-        )
-
-    if not reprojected_path.exists() or not reprojected_mask_path.exists():
-        progress(0.35, desc="Warpingを実行中")
-        run_command(
-            [
-                sys.executable,
-                "warping.py",
-                "--video_path",
-                str(input_path),
-                "--depth_path",
-                str(npz_path),
-                "--output_path_reprojected",
-                str(reprojected_path),
-                "--output_path_mask",
-                str(reprojected_mask_path),
-                "--disparity_perc",
-                "0.1",
-            ]
-        )
-
-    refine_args = [
+    run_args = [
         sys.executable,
-        "inpaint_and_refine.py",
+        "run.py",
+        "--model_id",
+        depth_model_id,
+        "--video_path",
+        str(input_path),
+        "--disparity_perc",
+        "0.1",
         "--mask_antialias",
         "0",
         "--model_config",
         str(CONFIG_PATH),
         "--ckpt",
         str(checkpoint_path),
-        "--video_path",
-        str(input_path),
-        "--reprojected_path",
-        str(reprojected_path),
-        "--reprojected_mask_path",
-        str(reprojected_mask_path),
-        "--output_folder",
-        str(OUTPUT_ROOT),
         "--chunk_size",
         str(int(chunk_size)),
+        "--output_folder",
+        str(OUTPUT_ROOT),
     ]
     extension = ".mov" if output_format == "ProRes.mov" else ".mp4"
     if output_format == "ProRes.mov":
-        refine_args.append("--use_prores")
-    refine_args.append("--save_sbs" if save_sbs else "--no-save_sbs")
+        run_args.append("--use_prores")
+    run_args.append("--save_sbs" if save_sbs else "--no-save_sbs")
 
-    progress(0.65, desc="Inpaint and refineを実行中")
-    run_command(refine_args)
+    progress(0.05, desc="M2SVIDを実行中")
+    run_command(run_args)
 
     generated_path = find_output_video(base_name, "generated", extension, started_at)
     if generated_path is None:

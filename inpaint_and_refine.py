@@ -17,6 +17,7 @@ limitations under the License.
 import sys
 import os
 import gc
+import json
 
 # PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}"
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -65,6 +66,7 @@ parser.add_argument("--enable_vae_fp16", action="store_true", default=False, hel
 parser.add_argument("--quanto_int8", action="store_true", default=False, help="Load optimum-quanto int8 quantized checkpoint (reduces GPU memory)")
 parser.add_argument("--chunk_size", type=int, default=10, help="Number of target frames to generate per chunk (VRAM reduction)")
 parser.add_argument("--use_prores", action="store_true", default=False, help="Save videos as ProRes 422 LT .mov")
+parser.add_argument("--padding_json_path", type=str, default=None, help="Path to padding metadata JSON")
 # --overlap は効果が薄い上にやたら時間がかかるので0推奨
 parser.add_argument("--overlap", type=int, default=0, help="Number of overlapping frames on each side of a chunk for temporal continuity")
 args = parser.parse_args()
@@ -269,6 +271,20 @@ def save_sbs_video(left_video, right_video, fps, path):
     process.wait()
 
 
+def crop_padding(video, padding_json_path):
+    """padding.json が指定されていれば、動画テンソルを元の解像度へ切り戻す。"""
+    if not padding_json_path:
+        return video
+    with open(padding_json_path, "r", encoding="utf-8") as f:
+        padding = json.load(f)
+
+    top = int(padding.get("pad_top", 0))
+    left = int(padding.get("pad_left", 0))
+    original_height = int(padding["original_height"])
+    original_width = int(padding["original_width"])
+    return video[:, :, top : top + original_height, left : left + original_width]
+
+
 video_name = args.output_basename if args.output_basename else os.path.splitext(os.path.basename(args.video_path))[0]
 os.makedirs(output_folder, exist_ok=True)
 
@@ -289,6 +305,9 @@ if suffix:
     sbs_path = f"{base_sbs}{suffix}{ext_sbs}"
     base_ana, ext_ana = os.path.splitext(anaglyph_path)
     anaglyph_path = f"{base_ana}{suffix}{ext_ana}"
+
+input_video = crop_padding(input_video, args.padding_json_path)
+generated_video = crop_padding(generated_video, args.padding_json_path)
 
 save_video(generated_video[None], fps, gen_path)
 gc.collect()
