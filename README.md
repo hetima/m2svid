@@ -3,7 +3,9 @@
 - なんか最終処理が25フレームまでしか対応してないみたいなので分割処理して結合するようにしたました（`inpaint_and_refine.py`）
 - `m2svid_weights.pt`と`open_clip_pytorch_model.bin`を合体させた safetensors
 - サブモジュールのリポジトリを直接内包
+- Video-Depth-Anything実装
 - Gradioインターフェイス
+- 一発生成コマンド
 
 ## インストール
 
@@ -23,7 +25,7 @@ uv pip install "path/to/flash_attn-2.8.3+cu130torch2.9.1cxx11abiTRUE-cp312-cp312
 uv pip install -r requirements.txt
 ```
 
-使い方はオリジナルと同じです。「Get started」の説明にあるモデルをダウンロードして配置し、「Inference」の項目のスクリプトを実行。`PYTHONPATH`の追加はスクリプト内でするようにしたので不要です。
+使い方はオリジナルと同じです。`PYTHONPATH`の追加はスクリプト内でするようにしたので不要です。gradioやすべての処理を一括で実行するスクリプトを追加しています。
 
 必要なモデルは [Hugging Face](https://huggingface.co/hrktxz/m2svid_models) にまとめています。`ckpts`という名前のフォルダを作ってこれをそのまま配置すればOKです。
 
@@ -32,6 +34,8 @@ uv pip install -r requirements.txt
 また、`--chunk_size`パラメータも付けました。一度に処理するフレーム数を指定できます（デフォルト10、最大25）。VRAM12GBで512x512の動画をそれなりの速度で処理できる限界は12くらいです。
 
 `--use_prores`フラグも付けました。これを渡すとmp4ではなくProRes LTのmovを書き出します。
+
+深度推定を[Video-Depth-Anything](https://github.com/DepthAnything/Video-Depth-Anything)にも対応しました。従来のDepthCrafterよりも圧倒的に速いです。`third_party/DepthCrafter/run.py` ではなく `get_depth.py` を使用し、`--model_id` 引数を設定してください。`depthcrafter`、`video-depth-anything-small`、`video-depth-anything-base`、`video-depth-anything-large` のいずれかです。モデルによってライセンスが異なるので本家を参照してください。800x600くらいならVRAM12GBでlarge行けます。
 
 ## m2svid_combined_quanto_int8.safetensors
 `m2svid_weights.pt`と`open_clip_pytorch_model.bin`を合体させたものです。[Hugging Face](https://huggingface.co/hrktxz/m2svid_combined) からダウンロードできます。
@@ -58,6 +62,60 @@ fp16 に変換したものです。処理速度やメモリ消費量はたぶん
 `--model_config`に`m2svid_combined.yaml`を指定して使用してください。`--quanto_int8` フラグは付けないでください。
 
 
+## run.py
+
+`get_depth.py`、`warping.py`、`inpaint_and_refine.py`を順番に呼び出す一括実行用スクリプトです。基本的にはこれを使えば、深度推定、右目画像のreproject、inpaint/refineまでまとめて実行できます。
+
+```sh
+python run.py \
+  --model_id video-depth-anything-base \
+  --video_path path/to/input.mp4 \
+  --disparity_perc 0.1 \
+  --mask_antialias 0 \
+  --model_config configs/m2svid_combined.yaml \
+  --ckpt ckpts/m2svid_combined/m2svid_combined_fp16.safetensors \
+  --use_prores \
+  --no-save_sbs \
+  --chunk_size 8 \
+  --output_folder outputs
+```
+
+Windows PowerShellの場合は行末を `` ` `` にしてください。
+
+```ps1
+python run.py `
+  --model_id video-depth-anything-base `
+  --video_path "path\to\input.mp4" `
+  --disparity_perc 0.1 `
+  --mask_antialias 0 `
+  --model_config "configs\m2svid_combined.yaml" `
+  --ckpt "ckpts\m2svid_combined\m2svid_combined_fp16.safetensors" `
+  --use_prores `
+  --no-save_sbs `
+  --chunk_size 8 `
+  --output_folder "outputs"
+```
+
+`output_folder`の中に入力動画のstem名で作業フォルダを作ります。例えば`input.mp4`なら、途中ファイルは主に`outputs/input/`以下に保存されます。最終成果物は`outputs/input_generated.mov`のように`output_folder`直下へ保存されます。
+
+途中ファイルが存在する場合は再利用します。`.npz`があれば深度推定をスキップし、`*_reprojected.mp4`と`*_reprojected_mask.mp4`があればwarpingをスキップします。inpaint/refineは毎回実行します。
+
+入力動画の幅と高さが64の倍数である必要がありますが、そうでないファイルを渡した場合は、`outputs/<stem>/<stem>_padded.mov`をProRes LTで作成し、`outputs/<stem>/padding.json`に元サイズとpadding情報を保存します。以降の処理はpadded動画で実行し、最終的なgenerated/SBS出力だけ元のサイズへcropして戻します。
+
+主な引数:
+
+- `--model_id`: 深度推定モデル。`depthcrafter`、`video-depth-anything-small`、`video-depth-anything-base`、`video-depth-anything-large`などを指定します。
+- `--video_path`: 入力動画のパス。
+- `--disparity_perc`: 横幅に対する視差量の割合。例: `0.1`なら動画幅の10%を基準にreprojectします。
+- `--mask_antialias`: reproject maskを縮小するときのantialias指定。既存の実行例では`0`。
+- `--model_config`: M2SVIDのconfig yaml。通常は`configs/m2svid_combined.yaml`。
+- `--ckpt`: M2SVIDのcheckpoint。fp16版なら`ckpts/m2svid_combined/m2svid_combined_fp16.safetensors`。
+- `--use_prores`: 最終出力をmp4ではなくProRes LTの`.mov`で保存します。
+- `--save_sbs` / `--no-save_sbs`: SBS動画を保存するかどうか。デフォルトは保存。
+- `--chunk_size`: 一度にinpaint/refineするフレーム数。最大25。VRAMが足りない場合は小さくしてください。
+- `--output_folder`: 作業フォルダと最終出力を置くフォルダ。
+
+
 ## Gradio
 
 `app.py` でGradioサーバーが立ち上がります。必要なモデルは全部自動で取ってきます。
@@ -65,7 +123,7 @@ fp16 に変換したものです。処理速度やメモリ消費量はたぶん
 
 ## CLIで使う例
 
-一発変換するPowerShellスクリプト例（リポジトリをカレントディレクトリにして実行してください）
+対象動画ファイルだけ引数に渡して一発変換するPowerShellスクリプト例（リポジトリをカレントディレクトリにして実行してください）
 
 ```ps1
 # conv filepath_to_convert [project_name]
@@ -74,12 +132,14 @@ function global:conv() {
     # Set-Location "path/to/m2svid"
 
     # setting
-    $outRootPath = "outputs"
+    $outputPath = "outputs"
     $cnfg = "configs/m2svid_combined.yaml"
-    $ckpt = "ckpts/m2svid_combined/m2svid_combined_fp16.safetensors"
     # $ckpt = "ckpts/m2svid_combined/m2svid_combined_quanto_int8.safetensors"
+    $ckpt = "ckpts/m2svid_combined/m2svid_combined_fp16.safetensors"
+    # video-depth-anything-small video-depth-anything-base depthcrafter
+    $deptModel = "video-depth-anything-large"
 
-    if ($null -eq $args[0]){
+    if ($null -eq $args[0]) {
         Write-Output "no file path"
         return
     }
@@ -87,39 +147,10 @@ function global:conv() {
         Write-Output "file path does not exists"
         return
     }
-    
     $path = $args[0]
     $fullPath = (Resolve-Path "$path").Path
-    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($path)
 
-    if ($null -eq $args[1]){
-        # $timestamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
-        # $projectName = "${timestamp}_${baseName}"
-        $projectName = "$baseName"
-    }else{
-        $projectName = $args[1]
-    }
-    $outPath = Join-Path -Path $outRootPath -ChildPath "$projectName"
-    [void](New-Item -Path $outPath -ItemType Directory -Force)
-
-    $npz = Join-Path -Path $outPath -ChildPath "${baseName}.npz"
-    if (!(Test-Path "$npz")) {
-        # --num_inference_steps 25
-        python third_party\DepthCrafter\run.py --video-path "$fullPath" --save_folder "$outPath" --save_npz True --num_inference_steps 5 --max_res 1024
-    }else{
-        Write-Host "npz exists. skip step 1."
-    }
-
-    $reprojected = Join-Path -Path $outPath -ChildPath "${baseName}_reprojected.mp4"
-    $reprojectedMask = Join-Path -Path $outPath -ChildPath "${baseName}_reprojected_mask.mp4"
-    if (!(Test-Path "$reprojected") -or !(Test-Path "$reprojectedMask")) {
-        # --disparity_perc 0.05
-        python warping.py --video_path "$fullPath" --depth_path "$npz" --output_path_reprojected "$reprojected" --output_path_mask "$reprojectedMask" --disparity_perc 0.1
-    }else{
-        Write-Host "reprojected exists. skip step 2."
-    }
-
-    python inpaint_and_refine.py --mask_antialias 0 --model_config "$cnfg" --ckpt "$ckpt" --video_path "$fullPath" --reprojected_path "$reprojected" --reprojected_mask_path "$reprojectedMask" --output_folder "$outRootPath" --use_prores --save_sbs --chunk_size 8
+    python run.py --model_id "$deptModel" --video_path "$fullPath" --output_folder "$outputPath" --disparity_perc 0.1 --mask_antialias 0 --model_config "$cnfg" --ckpt "$ckpt" --use_prores --no-save_sbs --chunk_size 10
 
     $sw.Stop()
     Write-Host "Elapsed Time: $($sw.Elapsed.ToString("hh\:mm\:ss"))" -ForegroundColor Cyan
