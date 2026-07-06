@@ -16,6 +16,12 @@ CHECKPOINTS = {
     "fp16": APP_DIR / "ckpts" / "m2svid_combined" / "m2svid_combined_fp16.safetensors",
     "int8": APP_DIR / "ckpts" / "m2svid_combined" / "m2svid_combined_quanto_int8.safetensors",
 }
+DEPTH_MODELS = {
+    "DepthCrafter": "depthcrafter",
+    "Video-Depth-Anything Small": "video-depth-anything-small",
+    "Video-Depth-Anything Base": "video-depth-anything-base",
+    "Video-Depth-Anything Large": "video-depth-anything-large",
+}
 
 
 def run_command(args: list[str]) -> None:
@@ -38,6 +44,7 @@ def find_output_video(base_name: str, suffix: str, extension: str, started_at: f
 
 def convert_video(
     video_path: str | None,
+    depth_model_label: str,
     chunk_size: int,
     checkpoint_kind: str,
     output_format: str,
@@ -58,7 +65,8 @@ def convert_video(
 
     started_at = time.time()
     base_name = input_path.stem
-    project_dir = OUTPUT_ROOT / base_name
+    depth_model_id = DEPTH_MODELS[depth_model_label]
+    project_dir = OUTPUT_ROOT / base_name / depth_model_id
     project_dir.mkdir(parents=True, exist_ok=True)
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -67,12 +75,14 @@ def convert_video(
     reprojected_mask_path = project_dir / f"{base_name}_reprojected_mask.mp4"
 
     if not npz_path.exists():
-        progress(0.05, desc="DepthCrafterを実行中")
+        progress(0.05, desc=f"{depth_model_label}を実行中")
         run_command(
             [
                 sys.executable,
-                "third_party/DepthCrafter/run.py",
-                "--video-path",
+                "get_depth.py",
+                "--model_id",
+                depth_model_id,
+                "--video_path",
                 str(input_path),
                 "--save_folder",
                 str(project_dir),
@@ -170,6 +180,11 @@ with gr.Blocks(title="M2SVID") as demo:
                 value=10,
                 step=1,
             )
+            depth_model = gr.Radio(
+                label="Depth model",
+                choices=list(DEPTH_MODELS.keys()),
+                value="DepthCrafter",
+            )
             checkpoint = gr.Radio(
                 label="Checkpoint",
                 choices=["fp16", "int8"],
@@ -190,7 +205,7 @@ with gr.Blocks(title="M2SVID") as demo:
 
     run_button.click(
         fn=convert_video,
-        inputs=[video_input, chunk_size, checkpoint, output_format, save_sbs],
+        inputs=[video_input, depth_model, chunk_size, checkpoint, output_format, save_sbs],
         outputs=[video_output, download_output],
     )
     clean_button.click(fn=clean_outputs, outputs=clean_status)

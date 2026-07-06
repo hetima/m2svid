@@ -4,4 +4,5 @@
 * **bidavideo:** Borrowed and modified from the [bidavideo repository](https://github.com/TomTomTommi/bidavideo), licensed under the **MIT License**.
 * **RAFT:** Extracted from the [bidavideo repository](https://github.com/TomTomTommi/bidavideo)(originally from the [RAFT repository]((https://github.com/princeton-vl/RAFT))), licensed under the **BSD 3-Clause License**. 
 * **DepthCrafter** Borrowed and modified from the [DepthCrafter repository](https://github.com/Tencent/DepthCrafter), licensed under the **Non-commercial license** restricted to academic, research, and educational use only.
+* **Video-Depth-Anything** Borrowed from the [Video-Depth-Anything repository](https://github.com/DepthAnything/Video-Depth-Anything). The code and Small model are licensed under the **Apache-2.0 License**; Base/Large model weights are licensed under **CC-BY-NC-4.0**.
 * **pytorch-msssim** Borrowed and modified from the [pytorch-msssimrepository](https://github.com/VainF/pytorch-msssim), licensed under the **MIT License**.

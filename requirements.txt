@@ -28,3 +28,11 @@ optimum-quanto
 
 gradio
 huggingface-hub
+
+# Video-Depth-Anything
+matplotlib
+pillow
+imageio-ffmpeg
+einops
+easydict
+OpenEXR
