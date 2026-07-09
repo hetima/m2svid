@@ -95,6 +95,7 @@ class VideoLDM(DiffusionEngine):
     def init_from_ckpt(
         self,
         path: str,
+        assign: bool = False,
     ) -> None:
         if path.endswith("ckpt"):
             sd = torch.load(path, map_location="cpu")
@@ -111,7 +112,7 @@ class VideoLDM(DiffusionEngine):
             raise NotImplementedError
 
         # missing, unexpected = self.load_state_dict(sd, strict=True)
-        missing, unexpected = self.load_state_dict(sd, strict=False)
+        missing, unexpected = self.load_state_dict(sd, strict=False, assign=assign)
         print(
             f"Restored from {path} with {len(missing)} missing and {len(unexpected)} unexpected keys"
         )
@@ -119,6 +120,7 @@ class VideoLDM(DiffusionEngine):
             print(f"Missing Keys: {missing}")
         if len(unexpected) > 0:
             print(f"Unexpected Keys: {unexpected}")
+        del sd
 
     def _init_first_stage(self, config):
         model = instantiate_from_config(config).eval()

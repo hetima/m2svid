@@ -19,6 +19,9 @@ import os
 import gc
 import json
 
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
+
 # PYTHONPATH="./:./third_party/Hi3D_Official/:./third_party/pytorch_msssim/:${PYTHONPATH}"
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 for _p in [
@@ -44,6 +47,23 @@ from third_party.Hi3D_Official.sgm.util import instantiate_from_config
 from m2svid.utils.video_utils import open_ffmpeg_process, get_video_fps
 from m2svid.data.utils import get_video_frames, apply_closing, apply_dilation
 from m2svid.utils.anaglyph import make_anaglyph_video
+
+
+def log_memory(label: str) -> None:
+    """現在のCPU/GPUメモリ使用量をログへ出す。"""
+    parts = [f"[memory] {label}"]
+    try:
+        import psutil
+        rss_gb = psutil.Process(os.getpid()).memory_info().rss / 1024**3
+        parts.append(f"rss={rss_gb:.2f}GiB")
+    except Exception:
+        pass
+    if torch.cuda.is_available():
+        allocated_gb = torch.cuda.memory_allocated() / 1024**3
+        reserved_gb = torch.cuda.memory_reserved() / 1024**3
+        parts.append(f"cuda_allocated={allocated_gb:.2f}GiB")
+        parts.append(f"cuda_reserved={reserved_gb:.2f}GiB")
+    print(" ".join(parts), flush=True)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_config", type=str)
@@ -87,27 +107,41 @@ if args.quanto_int8:
     # optimum-quanto int8量子化済みモデルの読み込み
     # first_stage_model (VAE) は除外: Conv2dがtimesteps kwargを使うためQConv2dと非互換
     from optimum.quanto import quantize, freeze, qint8
+    log_memory("before model instantiate")
     denoising_model = instantiate_from_config(config.model).half()
+    log_memory("after model instantiate")
     quantize(denoising_model, weights=qint8, exclude=["first_stage_model*"])
     freeze(denoising_model)
+    log_memory("after quanto freeze")
     denoising_model.init_from_ckpt(args.ckpt)
+    gc.collect()
+    log_memory("after checkpoint load")
     denoising_model = denoising_model.cuda().eval()
+    log_memory("after cuda")
 else:
+    log_memory("before model instantiate")
     denoising_model = instantiate_from_config(config.model).half()
-    denoising_model.init_from_ckpt(args.ckpt)
+    log_memory("after model instantiate")
+    denoising_model.init_from_ckpt(args.ckpt, assign=True)
+    denoising_model = denoising_model.half()
+    gc.collect()
+    log_memory("after checkpoint load")
     denoising_model = denoising_model.cuda().eval()
+    log_memory("after cuda")
 
 reprojected_closing_holes_kernel = args.reprojected_closing_holes_kernel
 mask_antialias = args.mask_antialias
 output_folder = args.output_folder
 
 # load and preprocess videos (probe once, reuse)
+log_memory("before video load")
 video_probe = ffmpeg.probe(args.video_path)
 fps = get_video_fps(args.video_path, video_probe)
 
 input_video = get_video_frames(args.video_path)
 reprojected = get_video_frames(args.reprojected_path)
 reprojected_mask = get_video_frames(args.reprojected_mask_path, video_is_grayscale=True)
+log_memory("after video load")
 
 reprojected_mask = apply_closing(reprojected_mask, reprojected_closing_holes_kernel)
 reprojected[reprojected_mask.repeat(1, 3, 1, 1) > 0.5] = 0
@@ -132,6 +166,7 @@ reprojected_mask = reprojected_mask[:, [0]]
 reprojected_mask = reprojected_mask.permute(
     1, 0, 2, 3
 ).float()  # [t,c,h,w] -> [c,t,h,w]
+log_memory("after video preprocess")
 
 
 chunk_size = args.chunk_size
