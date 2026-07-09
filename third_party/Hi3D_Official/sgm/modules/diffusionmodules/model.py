@@ -15,7 +15,9 @@ try:
     import xformers
     import xformers.ops
 
-    XFORMERS_IS_AVAILABLE = True
+    XFORMERS_IS_AVAILABLE = hasattr(xformers, "ops") and hasattr(
+        xformers.ops, "memory_efficient_attention"
+    )
 except:
     XFORMERS_IS_AVAILABLE = False
     logpy.warning("no module 'xformers'. Processing without...")
@@ -292,6 +294,9 @@ def make_attn(in_channels, attn_type="vanilla", attn_kwargs=None):
         )
         attn_type = "vanilla-xformers"
     logpy.info(f"making attention of type '{attn_type}' with {in_channels} in_channels")
+    if attn_type == "vanilla-xformers" and not XFORMERS_IS_AVAILABLE:
+        logpy.warning("xformers.ops is not available. Falling back to vanilla attention.")
+        attn_type = "vanilla"
     if attn_type == "vanilla":
         assert attn_kwargs is None
         return AttnBlock(in_channels)

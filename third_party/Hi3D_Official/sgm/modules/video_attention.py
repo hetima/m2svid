@@ -38,6 +38,11 @@ class VideoTransformerBlock(nn.Module):
     ):
         super().__init__()
 
+        if attn_mode != "softmax" and not XFORMERS_IS_AVAILABLE:
+            logpy.warn(
+                f"Attention mode '{attn_mode}' is not available. Falling back to native attention."
+            )
+            attn_mode = "softmax"
         attn_cls = self.ATTENTION_MODES[attn_mode]
 
         self.ff_in = ff_in or inner_dim is not None

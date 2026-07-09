@@ -50,7 +50,9 @@ try:
     import xformers
     import xformers.ops
 
-    XFORMERS_IS_AVAILABLE = True
+    XFORMERS_IS_AVAILABLE = hasattr(xformers, "ops") and hasattr(
+        xformers.ops, "memory_efficient_attention"
+    )
 except:
     XFORMERS_IS_AVAILABLE = False
     logpy.warn("no module 'xformers'. Processing without...")
@@ -610,6 +612,11 @@ class BasicTransformerSingleLayerBlock(nn.Module):
     ):
         super().__init__()
         assert attn_mode in self.ATTENTION_MODES
+        if attn_mode != "softmax" and not XFORMERS_IS_AVAILABLE:
+            logpy.warn(
+                f"Attention mode '{attn_mode}' is not available. Falling back to native attention."
+            )
+            attn_mode = "softmax"
         attn_cls = self.ATTENTION_MODES[attn_mode]
         self.attn1 = attn_cls(
             query_dim=dim,
