@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import os
 import subprocess
 import sys
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 
 import torch
@@ -55,6 +57,12 @@ def normalize_depth(depths: np.ndarray) -> np.ndarray:
     if depth_max <= depth_min:
         return np.zeros_like(depths, dtype=np.float32)
     return (depths - depth_min) / (depth_max - depth_min)
+
+
+def get_vda_input_size_candidates(input_size: int) -> list[int]:
+    """OOM時に試すVDA入力サイズ候補を作る。"""
+    candidates = [input_size, 448, 392, 336, 280]
+    return sorted({size for size in candidates if size <= input_size}, reverse=True)
 
 
 def run_depthcrafter(args: argparse.Namespace) -> None:
@@ -106,14 +114,31 @@ def run_video_depth_anything(args: argparse.Namespace) -> None:
         args.target_fps,
         args.max_res,
     )
-    with torch.inference_mode():
-        depths, fps = model.infer_video_depth(
-            frames,
-            target_fps,
-            input_size=args.input_size,
-            device=device,
-            fp32=args.fp32,
-        )
+    input_size_candidates = get_vda_input_size_candidates(args.input_size)
+    for i, input_size in enumerate(input_size_candidates):
+        try:
+            print(f"VDA input_size={input_size} で深度推定します。", flush=True)
+            with torch.inference_mode():
+                depths, fps = model.infer_video_depth(
+                    frames,
+                    target_fps,
+                    input_size=input_size,
+                    device=device,
+                    fp32=args.fp32,
+                )
+            break
+        except torch.OutOfMemoryError:
+            gc.collect()
+            if device == "cuda":
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+            if i == len(input_size_candidates) - 1:
+                raise
+            print(
+                f"CUDA OOM のため input_size を下げて再試行します: "
+                f"{input_size} -> {input_size_candidates[i + 1]}",
+                flush=True,
+            )
 
     depths = normalize_depth(np.asarray(depths))
 
