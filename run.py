@@ -88,6 +88,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use_prores", action="store_true", default=False)
     parser.add_argument("--save_sbs", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--chunk_size", type=int, default=10)
+    parser.add_argument("--depth_input_size", type=int, default=518)
     parser.add_argument("--output_folder", required=True)
     return parser.parse_args()
 
@@ -126,6 +127,8 @@ def main() -> None:
                 str(model_work_dir),
                 "--save_npz",
                 "True",
+                "--input_size",
+                str(args.depth_input_size),
             ]
         )
     else:

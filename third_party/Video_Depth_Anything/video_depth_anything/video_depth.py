@@ -102,7 +102,9 @@ class VideoDepthAnything(nn.Module):
                 cur_list.append(torch.from_numpy(transform({'image': frame_list[frame_id+i].astype(np.float32) / 255.0})['image']).unsqueeze(0).unsqueeze(0))
             cur_input = torch.cat(cur_list, dim=1).to(device)
             if pre_input is not None:
-                cur_input[:, :OVERLAP, ...] = pre_input[:, KEYFRAMES, ...]
+                cur_input[:, :OVERLAP, ...] = pre_input
+            if device == 'cuda':
+                torch.cuda.empty_cache()
 
             with torch.no_grad():
                 with torch.autocast(device_type=device, enabled=(not fp32)):
@@ -112,7 +114,10 @@ class VideoDepthAnything(nn.Module):
             depth = F.interpolate(depth.flatten(0,1).unsqueeze(1), size=(frame_height, frame_width), mode='bilinear', align_corners=True)
             depth_list += [depth[i][0].cpu().numpy() for i in range(depth.shape[0])]
 
-            pre_input = cur_input
+            pre_input = cur_input[:, KEYFRAMES, ...].detach().clone()
+            del cur_input, depth
+            if device == 'cuda':
+                torch.cuda.empty_cache()
 
         del frame_list
         gc.collect()
@@ -160,4 +165,3 @@ class VideoDepthAnything(nn.Module):
         depth_list = depth_list_aligned
 
         return np.stack(depth_list[:org_video_len], axis=0), target_fps
-
