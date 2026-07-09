@@ -133,97 +133,6 @@ reprojected_closing_holes_kernel = args.reprojected_closing_holes_kernel
 mask_antialias = args.mask_antialias
 output_folder = args.output_folder
 
-# load and preprocess videos (probe once, reuse)
-log_memory("before video load")
-video_probe = ffmpeg.probe(args.video_path)
-fps = get_video_fps(args.video_path, video_probe)
-
-input_video = get_video_frames(args.video_path)
-reprojected = get_video_frames(args.reprojected_path)
-reprojected_mask = get_video_frames(args.reprojected_mask_path, video_is_grayscale=True)
-log_memory("after video load")
-
-reprojected_mask = apply_closing(reprojected_mask, reprojected_closing_holes_kernel)
-reprojected[reprojected_mask.repeat(1, 3, 1, 1) > 0.5] = 0
-reprojected_mask = apply_dilation(reprojected_mask, 3)
-reprojected_mask = reprojected_mask.repeat(1, 3, 1, 1)
-
-input_video = input_video.permute(1, 0, 2, 3).float() * 2 - 1  # [t,c,h,w] -> [c,t,h,w]
-reprojected = reprojected.permute(1, 0, 2, 3).float() * 2 - 1  # [t,c,h,w] -> [c,t,h,w]
-reprojected_mask = (
-    reprojected_mask.permute(1, 0, 2, 3).float() * 2 - 1
-)  # [t,c,h,w] -> [c,t,h,w]
-
-c, t, h, w = reprojected_mask.shape
-downsampled_resolution = [int(h / 8), int(w / 8)]
-reprojected_mask = reprojected_mask.permute(
-    1, 0, 2, 3
-).float()  # [c,t,h,w] -> [t,c,h,w]
-reprojected_mask = transforms.Resize(downsampled_resolution, antialias=mask_antialias)(
-    reprojected_mask
-)
-reprojected_mask = reprojected_mask[:, [0]]
-reprojected_mask = reprojected_mask.permute(
-    1, 0, 2, 3
-).float()  # [t,c,h,w] -> [c,t,h,w]
-log_memory("after video preprocess")
-
-
-chunk_size = args.chunk_size
-overlap = args.overlap
-assert chunk_size + 2 * overlap <= denoising_model.num_samples, (
-    f"chunk_size({chunk_size}) + 2*overlap({overlap}) = {chunk_size + 2 * overlap} "
-    f"must be <= num_samples({denoising_model.num_samples})"
-)
-stride = chunk_size  # target frames to advance per chunk
-num_chunks = max(1, (t + stride - 1) // stride)  # ceil(t / stride)
-
-generated_chunks = []
-
-with torch.inference_mode():
-    pbar = tqdm(range(num_chunks), desc="Generating chunks")
-    for chunk_idx in pbar:
-        # --- compute target frame range (what we want to keep) ---
-        tgt_start = chunk_idx * stride
-        tgt_end = min(tgt_start + chunk_size, t)
-
-        # --- compute input range including overlap ---
-        inp_start = max(0, tgt_start - overlap)
-        inp_end = min(tgt_end + overlap, t)
-        actual_overlap_left = tgt_start - inp_start
-        actual_overlap_right = inp_end - tgt_end
-
-        pbar.set_description(
-            # f"chunk {chunk_idx + 1}/{num_chunks}, "
-            f"[input {inp_start}-{inp_end - 1}, "
-            f"output {tgt_start}-{tgt_end - 1}]"
-        )
-
-        chunk_batch = {
-            "video": input_video[None, :, inp_start:inp_end].cuda(),
-            "video_2nd_view": input_video[None, :, inp_start:inp_end].cuda(),
-            "reprojected_video": reprojected[None, :, inp_start:inp_end].cuda(),
-            "reprojected_mask": reprojected_mask[None, :, inp_start:inp_end].cuda(),
-            "fps_id": torch.tensor([fps]).cuda(),
-            "caption": [""],
-            "motion_bucket_id": torch.tensor([127]).cuda(),
-        }
-
-        chunk_output = denoising_model.generate(chunk_batch)["generated-video"]
-        # chunk_output shape: [1, C, T_input, H, W]
-        # Extract only the target (center) frames
-        center_start = actual_overlap_left
-        center_end = chunk_output.shape[2] - actual_overlap_right
-        generated_chunks.append(chunk_output[0, :, center_start:center_end].cpu())
-        del chunk_batch, chunk_output
-
-generated_video = torch.cat(generated_chunks, dim=1)  # [c, t_total, h, w]
-del generated_chunks, reprojected, reprojected_mask, denoising_model
-gc.collect()
-if torch.cuda.is_available():
-    torch.cuda.empty_cache()
-
-
 def check_unique_path(path: str) -> str:
     """pathのファイルが存在する場合、_01, _02, ... のサフィックスを付けてユニークなパスを返す。"""
     if not os.path.exists(path):
@@ -281,29 +190,20 @@ def frame_to_uint8(frame):
     )
 
 
-def save_video(video, fps, path):
-    """動画全体をNumPy化せず、1フレームずつffmpegへ書き出す。"""
-    video = video[0]  # [1, C, T, H, W] -> [C, T, H, W]
+def write_video_chunk(process, video):
+    """[C, T, H, W] の動画チャンクをffmpegへ書き出す。"""
     _, t, h, w = video.shape
-    use_prores = os.path.splitext(path)[1].lower() == ".mov"
-    process = open_ffmpeg_process(path, w, h, fps, crf=17, use_prores=use_prores)
     for i in range(t):
         process.stdin.write(frame_to_uint8(video[:, i]).tobytes())
-    process.stdin.close()
-    process.wait()
 
 
-def save_sbs_video(left_video, right_video, fps, path):
-    """SBS動画を全体結合せず、左右1フレームずつ横結合して書き出す。"""
+def write_sbs_chunk(process, left_video, right_video):
+    """左右の [C, T, H, W] チャンクをSBSとしてffmpegへ書き出す。"""
     _, t, h, w = left_video.shape
-    use_prores = os.path.splitext(path)[1].lower() == ".mov"
-    process = open_ffmpeg_process(path, w * 2, h, fps, crf=17, use_prores=use_prores)
     for i in range(t):
         left_frame = frame_to_uint8(left_video[:, i])
         right_frame = frame_to_uint8(right_video[:, i])
         process.stdin.write(np.concatenate([left_frame, right_frame], axis=1).tobytes())
-    process.stdin.close()
-    process.wait()
 
 
 def crop_padding(video, padding_json_path):
@@ -318,6 +218,64 @@ def crop_padding(video, padding_json_path):
     original_height = int(padding["original_height"])
     original_width = int(padding["original_width"])
     return video[:, :, top : top + original_height, left : left + original_width]
+
+
+def get_video_meta(video_path, probe):
+    """動画のフレーム数、解像度、長さを取得する。"""
+    stream = next(s for s in probe["streams"] if s["codec_type"] == "video")
+    fps = get_video_fps(video_path, probe)
+    if stream.get("nb_frames") and stream["nb_frames"] != "N/A":
+        frame_count = int(stream["nb_frames"])
+    else:
+        duration = float(stream.get("duration") or probe["format"]["duration"])
+        frame_count = int(round(duration * fps))
+    width = int(stream["width"])
+    height = int(stream["height"])
+    duration = float(stream.get("duration") or probe["format"].get("duration") or frame_count / fps)
+    return frame_count, width, height, duration
+
+
+def get_output_size(input_width, input_height, padding_json_path):
+    """paddingを戻した後の出力解像度を返す。"""
+    if not padding_json_path:
+        return input_width, input_height
+    with open(padding_json_path, "r", encoding="utf-8") as f:
+        padding = json.load(f)
+    return int(padding["original_width"]), int(padding["original_height"])
+
+
+def load_video_chunk(video_path, start_frame, num_frames, fps, width, height, duration, grayscale=False):
+    """指定フレーム範囲だけを読み込み、[T, C, H, W] のfloatテンソルで返す。"""
+    return get_video_frames(
+        video_path,
+        fps=fps,
+        num_frames=num_frames,
+        width=width,
+        height=height,
+        duration=duration,
+        start=start_frame / fps,
+        video_is_grayscale=grayscale,
+    )
+
+
+def make_chunk_batch(input_chunk, reprojected_chunk, mask_chunk):
+    """読み込んだチャンクからモデル入力を作る。"""
+    mask_chunk = apply_closing(mask_chunk, reprojected_closing_holes_kernel)
+    reprojected_chunk[mask_chunk.repeat(1, 3, 1, 1) > 0.5] = 0
+    mask_chunk = apply_dilation(mask_chunk, 3)
+    mask_chunk = mask_chunk.repeat(1, 3, 1, 1)
+
+    input_chunk = input_chunk.permute(1, 0, 2, 3).float() * 2 - 1
+    reprojected_chunk = reprojected_chunk.permute(1, 0, 2, 3).float() * 2 - 1
+    mask_chunk = mask_chunk.permute(1, 0, 2, 3).float() * 2 - 1
+
+    _, _, h, w = mask_chunk.shape
+    downsampled_resolution = [int(h / 8), int(w / 8)]
+    mask_chunk = mask_chunk.permute(1, 0, 2, 3).float()
+    mask_chunk = transforms.Resize(downsampled_resolution, antialias=mask_antialias)(mask_chunk)
+    mask_chunk = mask_chunk[:, [0]]
+    mask_chunk = mask_chunk.permute(1, 0, 2, 3).float()
+    return input_chunk, reprojected_chunk, mask_chunk
 
 
 video_name = args.output_basename if args.output_basename else os.path.splitext(os.path.basename(args.video_path))[0]
@@ -341,18 +299,114 @@ if suffix:
     base_ana, ext_ana = os.path.splitext(anaglyph_path)
     anaglyph_path = f"{base_ana}{suffix}{ext_ana}"
 
-input_video = crop_padding(input_video, args.padding_json_path)
-generated_video = crop_padding(generated_video, args.padding_json_path)
+# 動画全体はRAMに載せず、必要なチャンクだけ読み込む。
+log_memory("before video probe")
+video_probe = ffmpeg.probe(args.video_path)
+fps = get_video_fps(args.video_path, video_probe)
+t, width, height, duration = get_video_meta(args.video_path, video_probe)
+output_width, output_height = get_output_size(width, height, args.padding_json_path)
+log_memory("after video probe")
 
-save_video(generated_video[None], fps, gen_path)
-gc.collect()
+chunk_size = args.chunk_size
+overlap = args.overlap
+assert chunk_size + 2 * overlap <= denoising_model.num_samples, (
+    f"chunk_size({chunk_size}) + 2*overlap({overlap}) = {chunk_size + 2 * overlap} "
+    f"must be <= num_samples({denoising_model.num_samples})"
+)
+stride = chunk_size
+num_chunks = max(1, (t + stride - 1) // stride)
+use_prores = os.path.splitext(gen_path)[1].lower() == ".mov"
 
+gen_process = open_ffmpeg_process(gen_path, output_width, output_height, fps, crf=17, use_prores=use_prores)
+sbs_process = None
+anaglyph_process = None
 if args.save_sbs:
-    save_sbs_video(input_video, generated_video, fps, sbs_path)
-    gc.collect()
-
+    sbs_process = open_ffmpeg_process(sbs_path, output_width * 2, output_height, fps, crf=17, use_prores=use_prores)
 if args.save_anaglyph:
-    anaglyph = make_anaglyph_video(
-        input_video, generated_video, unnormalized_videos=True
-    )
-    save_video(anaglyph[None], fps, anaglyph_path)
+    anaglyph_process = open_ffmpeg_process(anaglyph_path, output_width, output_height, fps, crf=17, use_prores=use_prores)
+
+try:
+    with torch.inference_mode():
+        pbar = tqdm(range(num_chunks), desc="Generating chunks")
+        for chunk_idx in pbar:
+            tgt_start = chunk_idx * stride
+            tgt_end = min(tgt_start + chunk_size, t)
+            inp_start = max(0, tgt_start - overlap)
+            inp_end = min(tgt_end + overlap, t)
+            num_input_frames = inp_end - inp_start
+            actual_overlap_left = tgt_start - inp_start
+            actual_overlap_right = inp_end - tgt_end
+
+            pbar.set_description(
+                f"[input {inp_start}-{inp_end - 1}, "
+                f"output {tgt_start}-{tgt_end - 1}]"
+            )
+
+            input_chunk = load_video_chunk(args.video_path, inp_start, num_input_frames, fps, width, height, duration)
+            reprojected_chunk = load_video_chunk(args.reprojected_path, inp_start, num_input_frames, fps, width, height, duration)
+            mask_chunk = load_video_chunk(
+                args.reprojected_mask_path,
+                inp_start,
+                num_input_frames,
+                fps,
+                width,
+                height,
+                duration,
+                grayscale=True,
+            )
+            input_chunk, reprojected_chunk, mask_chunk = make_chunk_batch(input_chunk, reprojected_chunk, mask_chunk)
+
+            chunk_batch = {
+                "video": input_chunk[None].cuda(),
+                "video_2nd_view": input_chunk[None].cuda(),
+                "reprojected_video": reprojected_chunk[None].cuda(),
+                "reprojected_mask": mask_chunk[None].cuda(),
+                "fps_id": torch.tensor([fps]).cuda(),
+                "caption": [""],
+                "motion_bucket_id": torch.tensor([127]).cuda(),
+            }
+
+            chunk_output = denoising_model.generate(chunk_batch)["generated-video"]
+            center_start = actual_overlap_left
+            center_end = chunk_output.shape[2] - actual_overlap_right
+            generated_chunk = chunk_output[0, :, center_start:center_end].cpu()
+            input_center = input_chunk[:, center_start:center_end].cpu()
+
+            generated_chunk = crop_padding(generated_chunk, args.padding_json_path)
+            input_center = crop_padding(input_center, args.padding_json_path)
+            write_video_chunk(gen_process, generated_chunk)
+            if sbs_process is not None:
+                write_sbs_chunk(sbs_process, input_center, generated_chunk)
+            if anaglyph_process is not None:
+                anaglyph = make_anaglyph_video(input_center, generated_chunk, unnormalized_videos=True)
+                write_video_chunk(anaglyph_process, anaglyph)
+
+            del (
+                input_chunk,
+                reprojected_chunk,
+                mask_chunk,
+                chunk_batch,
+                chunk_output,
+                generated_chunk,
+                input_center,
+            )
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+finally:
+    for process in [gen_process, sbs_process, anaglyph_process]:
+        if process is None:
+            continue
+        try:
+            try:
+                process.stdin.close()
+            except Exception:
+                pass
+            process.wait()
+        except Exception:
+            pass
+
+del denoising_model
+gc.collect()
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
