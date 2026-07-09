@@ -20,7 +20,8 @@ scipy
 # torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu130
 transformers
 tqdm
-triton-windows
+triton; sys_platform == "linux"
+triton-windows; sys_platform == "win32"
 # xformers==0.0.33 # torch==2.9 で上書きされる
 # xformers==0.0.33.post2 # これは2.9.1用らしいがうまく動かない
 # pip install xformers==0.0.33 --no-deps で torch の上書きを避けて入れる
