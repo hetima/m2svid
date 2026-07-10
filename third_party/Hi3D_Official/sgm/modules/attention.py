@@ -14,31 +14,23 @@ logpy = logging.getLogger(__name__)
 
 if version.parse(torch.__version__) >= version.parse("2.0.0"):
     SDP_IS_AVAILABLE = True
-    from torch.backends.cuda import SDPBackend, sdp_kernel
+    from torch.nn.attention import SDPBackend, sdpa_kernel
 
     BACKEND_MAP = {
-        SDPBackend.MATH: {
-            "enable_math": True,
-            "enable_flash": False,
-            "enable_mem_efficient": False,
-        },
-        SDPBackend.FLASH_ATTENTION: {
-            "enable_math": False,
-            "enable_flash": True,
-            "enable_mem_efficient": False,
-        },
-        SDPBackend.EFFICIENT_ATTENTION: {
-            "enable_math": False,
-            "enable_flash": False,
-            "enable_mem_efficient": True,
-        },
-        None: {"enable_math": True, "enable_flash": True, "enable_mem_efficient": True},
+        SDPBackend.MATH: [SDPBackend.MATH],
+        SDPBackend.FLASH_ATTENTION: [SDPBackend.FLASH_ATTENTION],
+        SDPBackend.EFFICIENT_ATTENTION: [SDPBackend.EFFICIENT_ATTENTION],
+        None: [
+            SDPBackend.MATH,
+            SDPBackend.FLASH_ATTENTION,
+            SDPBackend.EFFICIENT_ATTENTION,
+        ],
     }
 else:
     from contextlib import nullcontext
 
     SDP_IS_AVAILABLE = False
-    sdp_kernel = nullcontext
+    sdpa_kernel = nullcontext
     BACKEND_MAP = {}
     logpy.warn(
         f"No SDP backend available, likely because you are running in pytorch "
@@ -331,7 +323,7 @@ class CrossAttention(nn.Module):
         out = einsum('b i j, b j d -> b i d', sim, v)
         """
         ## new
-        with sdp_kernel(**BACKEND_MAP[self.backend]):
+        with sdpa_kernel(BACKEND_MAP[self.backend]):
             # print("dispatching into backend", self.backend, "q/k/v shape: ", q.shape, k.shape, v.shape)
             out = F.scaled_dot_product_attention(
                 q, k, v, attn_mask=mask
@@ -552,7 +544,13 @@ class BasicTransformerBlock(nn.Module):
         # return mixed_checkpoint(self._forward, kwargs, self.parameters(), self.checkpoint)
         if self.checkpoint:
             if use_reentrant is None:
-                return checkpoint(self._forward, x, context, context_instead_of_self_attn)
+                return checkpoint(
+                    self._forward,
+                    x,
+                    context,
+                    context_instead_of_self_attn,
+                    use_reentrant=False,
+                )
             else:
                 return checkpoint(self._forward, x, context, context_instead_of_self_attn, use_reentrant=use_reentrant)
 
@@ -633,7 +631,7 @@ class BasicTransformerSingleLayerBlock(nn.Module):
     def forward(self, x, context=None):
         # inputs = {"x": x, "context": context}
         # return checkpoint(self._forward, inputs, self.parameters(), self.checkpoint)
-        return checkpoint(self._forward, x, context)
+        return checkpoint(self._forward, x, context, use_reentrant=False)
 
     def _forward(self, x, context=None):
         x = self.attn1(self.norm1(x), context=context) + x
