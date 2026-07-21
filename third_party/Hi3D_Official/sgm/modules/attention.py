@@ -363,6 +363,7 @@ class MemoryEfficientCrossAttention(nn.Module):
             nn.Linear(inner_dim, query_dim), nn.Dropout(dropout)
         )
         self.attention_op: Optional[Any] = None
+        self._use_xformers = True
 
     def forward(
         self,
@@ -407,30 +408,42 @@ class MemoryEfficientCrossAttention(nn.Module):
             (q, k, v),
         )
 
-        # actually compute the attention, what we cannot get enough of
-        if version.parse(xformers.__version__) >= version.parse("0.0.21"):
-            # NOTE: workaround for
-            # https://github.com/facebookresearch/xformers/issues/845
-            max_bs = 32768
-            N = q.shape[0]
-            n_batches = math.ceil(N / max_bs)
-            out = list()
-            for i_batch in range(n_batches):
-                batch = slice(i_batch * max_bs, (i_batch + 1) * max_bs)
-                out.append(
-                    xformers.ops.memory_efficient_attention(
-                        q[batch],
-                        k[batch],
-                        v[batch],
-                        attn_bias=None,
-                        op=self.attention_op,
+        # 実行中のGPUと入力形状を処理できない場合だけPyTorch実装へ切り替える。
+        if self._use_xformers:
+            try:
+                if version.parse(xformers.__version__) >= version.parse("0.0.21"):
+                    # NOTE: workaround for
+                    # https://github.com/facebookresearch/xformers/issues/845
+                    max_bs = 32768
+                    N = q.shape[0]
+                    n_batches = math.ceil(N / max_bs)
+                    out = list()
+                    for i_batch in range(n_batches):
+                        batch = slice(i_batch * max_bs, (i_batch + 1) * max_bs)
+                        out.append(
+                            xformers.ops.memory_efficient_attention(
+                                q[batch],
+                                k[batch],
+                                v[batch],
+                                attn_bias=None,
+                                op=self.attention_op,
+                            )
+                        )
+                    out = torch.cat(out, 0)
+                else:
+                    out = xformers.ops.memory_efficient_attention(
+                        q, k, v, attn_bias=None, op=self.attention_op
                     )
+            except NotImplementedError:
+                self._use_xformers = False
+                logpy.warning(
+                    "この入力を処理できるxFormers演算子がないため、PyTorch Attentionへ切り替えます。"
                 )
-            out = torch.cat(out, 0)
-        else:
-            out = xformers.ops.memory_efficient_attention(
-                q, k, v, attn_bias=None, op=self.attention_op
-            )
+
+        if not self._use_xformers:
+            out = torch.nn.functional.scaled_dot_product_attention(
+                q.unsqueeze(1), k.unsqueeze(1), v.unsqueeze(1)
+            ).squeeze(1)
 
         # TODO: Use this directly in the attention operation, as a bias
         if exists(mask):

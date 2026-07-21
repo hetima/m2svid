@@ -229,6 +229,7 @@ class MemoryEfficientAttnBlock(nn.Module):
             in_channels, in_channels, kernel_size=1, stride=1, padding=0
         )
         self.attention_op: Optional[Any] = None
+        self._use_xformers = True
 
     def attention(self, h_: torch.Tensor) -> torch.Tensor:
         h_ = self.norm(h_)
@@ -248,9 +249,21 @@ class MemoryEfficientAttnBlock(nn.Module):
             .contiguous(),
             (q, k, v),
         )
-        out = xformers.ops.memory_efficient_attention(
-            q, k, v, attn_bias=None, op=self.attention_op
-        )
+        if self._use_xformers:
+            try:
+                out = xformers.ops.memory_efficient_attention(
+                    q, k, v, attn_bias=None, op=self.attention_op
+                )
+            except NotImplementedError:
+                self._use_xformers = False
+                logpy.warning(
+                    "この入力を処理できるxFormers演算子がないため、PyTorch Attentionへ切り替えます。"
+                )
+
+        if not self._use_xformers:
+            out = torch.nn.functional.scaled_dot_product_attention(
+                q.unsqueeze(1), k.unsqueeze(1), v.unsqueeze(1)
+            ).squeeze(1)
 
         out = (
             out.unsqueeze(0)
